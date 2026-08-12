@@ -1527,7 +1527,7 @@ function MapScreen({
           onClick={() => handleTileClick(x, y, locked)}
           onPointerDown={!locked && occupantEmoji ? (e) => handleTilePointerDown(x, y, placedSpecies ? 'animal' : 'decoration', occupantEmoji, e) : undefined}
           title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : undefined}
-          style={{touchAction: 'none'}}
+          style={occupantEmoji ? {touchAction: 'none'} : undefined}
         >
           {locked ? (
             <span className="map-lock">🔒</span>
