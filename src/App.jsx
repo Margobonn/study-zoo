@@ -155,6 +155,7 @@ function defaultState(){
     food: 0,
     coins: 0,
     animals: [],
+    unlockedSpeciesIds: [], // time-threshold reached, purchasable in the shop but not yet owned
     sessionLog: [], // { ts, dateKey, minutes }
   };
 }
@@ -171,6 +172,7 @@ function normalizeState(parsed){
     timer: { ...base.timer, ...(parsed.timer||{}) },
     stats: { ...base.stats, ...(parsed.stats||{}) },
     sessionLog: parsed.sessionLog || [],
+    unlockedSpeciesIds: parsed.unlockedSpeciesIds || [],
   };
 }
 
@@ -204,12 +206,14 @@ function fmtTime(ms){
   return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
 }
 
-// Species newly crossed by `totalMinutes` that aren't already owned, sorted
-// so the lowest threshold (and therefore the modal queue) reveals first.
-function getNewlyUnlockedSpecies(totalMinutes, ownedAnimals){
-  const ownedIds = new Set(ownedAnimals.map(a => a.speciesId));
+// Species whose time threshold `totalMinutes` has now crossed, that aren't
+// already owned AND aren't already sitting in the shop as purchasable —
+// i.e. species that should newly become available to buy. Sorted so the
+// lowest threshold reveals first (toast queue order).
+function getNewlyAvailableSpecies(totalMinutes, ownedAnimals, unlockedSpeciesIds){
+  const knownIds = new Set([...ownedAnimals.map(a => a.speciesId), ...unlockedSpeciesIds]);
   return SPECIES
-    .filter(s => s.tiempoMinimoMinutos <= totalMinutes && !ownedIds.has(s.id))
+    .filter(s => s.tiempoMinimoMinutos <= totalMinutes && !knownIds.has(s.id))
     .sort((a, b) => a.tiempoMinimoMinutos - b.tiempoMinimoMinutos);
 }
 
@@ -278,12 +282,12 @@ export default function App(){
   const finishLoading = useCallback((s) => {
     // Catches up any species whose threshold is already covered by
     // previously accumulated minutes (e.g. thresholds changed, migrating
-    // from an older save, or just-downloaded cloud progress) — done
-    // silently, without the celebration modal, since it's not tied to a
-    // just-completed session.
-    const newlyUnlocked = getNewlyUnlockedSpecies(s.stats.totalStudyMinutes, s.animals);
-    const patched = newlyUnlocked.length > 0
-      ? { ...s, animals: [...s.animals, ...newlyUnlocked.map(makeAnimalInstance)] }
+    // from an older save, or just-downloaded cloud progress) — added to
+    // the shop's purchasable list silently, no toast, since it's not tied
+    // to a just-completed session.
+    const newlyAvailable = getNewlyAvailableSpecies(s.stats.totalStudyMinutes, s.animals, s.unlockedSpeciesIds);
+    const patched = newlyAvailable.length > 0
+      ? { ...s, unlockedSpeciesIds: [...s.unlockedSpeciesIds, ...newlyAvailable.map(sp => sp.id)] }
       : s;
     setState(patched);
     setReady(true);
@@ -401,11 +405,10 @@ export default function App(){
   // distinguishable regardless of which completion sound is selected.
   const playWarningTick = useCallback(() => playTone(1400, 0.12, 0.15), [playTone]);
 
-  // newInstances are pre-built by the caller (the completion effect) so the
-  // exact same instances end up both in state.animals and in the modal
-  // queue — building them twice would give the stored animal and the
-  // celebration modal different names/ids for the same unlock.
-  const registerCompletedSession = useCallback((extraMinutes, newInstances) => {
+  // newlyAvailableSpeciesIds are species whose time threshold this session
+  // just crossed — they become purchasable in the shop, not owned outright
+  // (buying them is a separate step, see buyAnimal below).
+  const registerCompletedSession = useCallback((extraMinutes, newlyAvailableSpeciesIds) => {
     setState(prev => {
       if(!prev) return prev;
       const todayKey = dateKey();
@@ -433,7 +436,7 @@ export default function App(){
         },
         coins: prev.coins + coinsEarned,
         sessionLog: [...prev.sessionLog, { ts: Date.now(), dateKey: todayKey, minutes }],
-        animals: [...prev.animals, ...newInstances],
+        unlockedSpeciesIds: [...prev.unlockedSpeciesIds, ...newlyAvailableSpeciesIds],
       };
     });
   }, []);
@@ -493,16 +496,15 @@ export default function App(){
       if(finishedPhase === 'study'){
         const minutes = state.config.studyMin + extraMinutes;
         const newTotal = state.stats.totalStudyMinutes + minutes;
-        const newlyUnlockedSpecies = getNewlyUnlockedSpecies(newTotal, state.animals);
-        const newInstances = newlyUnlockedSpecies.map(makeAnimalInstance);
-        registerCompletedSession(extraMinutes, newInstances);
-        if(newInstances.length > 0){
-          setUnlockQueue(q => [
-            ...q,
-            ...newlyUnlockedSpecies.map((sp, i) => ({ species: sp, instance: newInstances[i] })),
-          ]);
+        const newlyAvailableSpecies = getNewlyAvailableSpecies(newTotal, state.animals, state.unlockedSpeciesIds);
+        registerCompletedSession(extraMinutes, newlyAvailableSpecies.map(sp => sp.id));
+        if(newlyAvailableSpecies.length === 1){
+          showToast(`🛒 ¡${newlyAvailableSpecies[0].name} ya está disponible en la tienda!`);
+        } else if(newlyAvailableSpecies.length > 1){
+          showToast(`🛒 ¡${newlyAvailableSpecies.length} animales nuevos disponibles en la tienda!`);
+        } else {
+          showToast('¡Sesión de estudio completada!');
         }
-        showToast('¡Sesión de estudio completada!');
       } else {
         showToast('Descanso terminado. ¡A seguir!');
       }
@@ -634,13 +636,21 @@ export default function App(){
     showToast('¡Animal alimentado! 🍖');
   };
 
+  // Affordability is decided from the `state` already rendered on screen
+  // (not from inside the setState updater) because the timer tick effect
+  // fires setState very frequently — when a tick update is already pending,
+  // React defers the updater instead of running it eagerly, so reading a
+  // `bought` flag set inside the updater right after calling setState is
+  // unreliable and can silently show the wrong toast / skip the modal.
   const buyFoodBundle = (bundleId) => {
     const bundle = SHOP_FOOD_BUNDLES.find(b => b.id === bundleId);
     if(!bundle) return;
-    let bought = false;
+    if(state.coins < bundle.price){
+      showToast(`Te faltan ${COIN_NAME_PLURAL.toLowerCase()} para eso`);
+      return;
+    }
     setState(prev => {
       if(!prev || prev.coins < bundle.price) return prev;
-      bought = true;
       return {
         ...prev,
         coins: prev.coins - bundle.price,
@@ -652,8 +662,29 @@ export default function App(){
         },
       };
     });
-    if(bought) showToast(`+${bundle.foodAmount} 🍖 comida comprada`);
-    else showToast(`Te faltan ${COIN_NAME_PLURAL.toLowerCase()} para eso`);
+    showToast(`+${bundle.foodAmount} 🍖 comida comprada`);
+  };
+
+  const buyAnimal = (speciesId) => {
+    const species = SPECIES.find(s => s.id === speciesId);
+    if(!species || !state.unlockedSpeciesIds.includes(speciesId)) return;
+    const price = SHOP_ANIMAL_PRICE_BY_RARITY[species.rarity];
+    if(state.coins < price){
+      showToast(`Te faltan ${COIN_NAME_PLURAL.toLowerCase()} para eso`);
+      return;
+    }
+    const newInstance = makeAnimalInstance(species);
+    setState(prev => {
+      if(!prev || !prev.unlockedSpeciesIds.includes(speciesId) || prev.coins < price) return prev;
+      return {
+        ...prev,
+        coins: prev.coins - price,
+        animals: [...prev.animals, newInstance],
+        unlockedSpeciesIds: prev.unlockedSpeciesIds.filter(id => id !== speciesId),
+        stats: { ...prev.stats, totalCoinsSpent: prev.stats.totalCoinsSpent + price },
+      };
+    });
+    setUnlockQueue(q => [...q, { species, instance: newInstance }]);
   };
 
   const resetAllData = () => {
@@ -733,7 +764,7 @@ export default function App(){
           />
         )}
         {tab === 'shop' && (
-          <ShopScreen state={state} onBuyFoodBundle={buyFoodBundle} />
+          <ShopScreen state={state} onBuyFoodBundle={buyFoodBundle} onBuyAnimal={buyAnimal} />
         )}
         {tab === 'stats' && (
           <StatsScreen state={state} />
@@ -940,6 +971,18 @@ function LockedCard({ species, totalStudyMinutes }){
   );
 }
 
+function AvailableCard({ species }){
+  const price = SHOP_ANIMAL_PRICE_BY_RARITY[species.rarity];
+  return (
+    <div className="animal-card available" title="Disponible en la tienda">
+      <span className="rarity-dot" style={{background: RARITY_META[species.rarity].color}}></span>
+      <span className="emoji">{species.emoji}</span>
+      <div className="nm">{species.name}</div>
+      <div className="lock-remaining">🛒 {COIN_EMOJI} {price}</div>
+    </div>
+  );
+}
+
 function ZooScreen({ state, onSelect }){
   const [rarityFilter, setRarityFilter] = useState('all');
   const [stateFilter, setStateFilter] = useState('all');
@@ -1049,7 +1092,11 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
         if(matching.length > 0){
           matching.forEach(a => visibleCards.push(<AnimalCard key={a.id} animal={a} species={sp} onSelect={onSelect} />));
         } else if(allOwnedOfSpecies.length === 0){
-          visibleCards.push(<LockedCard key={sp.id} species={sp} totalStudyMinutes={state.stats.totalStudyMinutes} />);
+          if(state.unlockedSpeciesIds.includes(sp.id)){
+            visibleCards.push(<AvailableCard key={sp.id} species={sp} />);
+          } else {
+            visibleCards.push(<LockedCard key={sp.id} species={sp} totalStudyMinutes={state.stats.totalStudyMinutes} />);
+          }
         }
       });
 
@@ -1059,7 +1106,7 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
         : 'Ningún animal descubierto aquí todavía.';
       return { hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage };
     }).filter(Boolean);
-  }, [state.animals, state.stats.totalStudyMinutes, rarityFilter, matchesFilters]);
+  }, [state.animals, state.stats.totalStudyMinutes, state.unlockedSpeciesIds, rarityFilter, matchesFilters]);
 
   return (
     <React.Fragment>
@@ -1082,7 +1129,12 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
 
 /* ============ SHOP SCREEN ============ */
 
-function ShopScreen({ state, onBuyFoodBundle }){
+function ShopScreen({ state, onBuyFoodBundle, onBuyAnimal }){
+  const purchasableSpecies = state.unlockedSpeciesIds
+    .map(id => SPECIES.find(s => s.id === id))
+    .filter(Boolean)
+    .sort((a, b) => SHOP_ANIMAL_PRICE_BY_RARITY[a.rarity] - SHOP_ANIMAL_PRICE_BY_RARITY[b.rarity]);
+
   return (
     <React.Fragment>
       <div className="zoo-header">
@@ -1117,9 +1169,33 @@ function ShopScreen({ state, onBuyFoodBundle }){
 
       <div className="config-section">
         <h3>🐘 Animales</h3>
-        <div style={{fontSize:'0.8rem', color:'var(--text-dim)'}}>
-          Próximamente: comprá los animales que ya desbloqueaste estudiando.
-        </div>
+        {purchasableSpecies.length === 0 ? (
+          <div style={{fontSize:'0.8rem', color:'var(--text-dim)'}}>
+            Seguí estudiando para desbloquear animales que después podrás comprar acá.
+          </div>
+        ) : (
+          <div className="shop-grid">
+            {purchasableSpecies.map(sp => {
+              const price = SHOP_ANIMAL_PRICE_BY_RARITY[sp.rarity];
+              const canAfford = state.coins >= price;
+              return (
+                <div key={sp.id} className="shop-card">
+                  <span className="rarity-dot" style={{background: RARITY_META[sp.rarity].color}}></span>
+                  <div className="shop-card-emoji">{sp.emoji}</div>
+                  <div className="shop-card-label">{sp.name}</div>
+                  <div className="shop-card-detail">{RARITY_META[sp.rarity].label}</div>
+                  <button
+                    className="btn primary small"
+                    disabled={!canAfford}
+                    onClick={() => onBuyAnimal(sp.id)}
+                  >
+                    {COIN_EMOJI} {price}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="config-section">
