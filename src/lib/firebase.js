@@ -7,6 +7,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  signInWithCredential,
   signOut,
   deleteUser,
   onAuthStateChanged,
@@ -58,10 +59,22 @@ function isMobileWeb(){
 
 export async function loginWithGoogle(){
   if(Capacitor.isNativePlatform()){
-    // Drives the native Google Sign-In SDK; the plugin syncs the result
-    // into `auth` automatically, so onAuthChange() picks it up same as
-    // any other sign-in method.
+    // This only signs the user into the plugin's NATIVE layer — despite
+    // `skipNativeAuth: false`, it does NOT automatically sign `auth` (the
+    // JS SDK instance) in too. Everything else in this app (onAuthChange,
+    // Firestore reads/writes) is built on the JS SDK, so without this next
+    // step the native picker succeeds but the app never leaves guest mode.
+    // Bridge it manually: take the ID token the native sign-in returned
+    // and use it to sign `auth` in for real via signInWithCredential.
     const result = await FirebaseAuthentication.signInWithGoogle();
+    if(result.credential && result.credential.idToken){
+      const jsCredential = GoogleAuthProvider.credential(
+        result.credential.idToken,
+        result.credential.accessToken
+      );
+      const jsResult = await signInWithCredential(auth, jsCredential);
+      return jsResult.user;
+    }
     return result.user;
   }
   if(isMobileWeb()){
