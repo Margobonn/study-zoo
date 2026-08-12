@@ -33,6 +33,14 @@ export default defineConfig({
         // Precache the built app shell so the timer keeps working offline
         // once it's been opened at least once.
         globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
+        // Without these, a new service worker sits in "waiting" until every
+        // open tab/PWA instance of the site is fully closed — reloading
+        // isn't enough, so a deploy can look "stuck" on the old version for
+        // a long time. skipWaiting activates it immediately; clientsClaim
+        // hands it control of already-open pages right away, so autoUpdate
+        // registration (main.jsx) actually detects the update and reloads.
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],
