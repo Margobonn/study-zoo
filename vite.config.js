@@ -42,5 +42,17 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // Firebase (auth+firestore+app) and React rarely change alongside
+        // app code, so splitting them into their own chunks means a
+        // deploy that only touches src/App.jsx doesn't force a re-download
+        // of ~800kB of vendor code the browser already has cached.
+        manualChunks: {
+          firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+          react: ['react', 'react-dom'],
+        },
+      },
+    },
   },
 });
