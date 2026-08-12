@@ -1,6 +1,6 @@
 {
   "appId": "com.studyzoo.app",
-  "appName": "Study Zoo",
+  "appName": "StudyZOO",
   "webDir": "dist",
   "plugins": {
     "LocalNotifications": {
