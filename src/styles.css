@@ -110,6 +110,28 @@ body{
 .shop-card-label{ font-size: 0.72rem; font-weight:600; }
 .shop-card-detail{ font-size: 0.68rem; color: var(--text-dim); margin-bottom:4px; }
 
+/* ---- Playable map (etapa 3) ---- */
+.map-toolbar{ margin-bottom: 12px; }
+.map-toolbar-label{ font-size: 0.72rem; color: var(--text-dim); margin-bottom:6px; font-weight:600; }
+.map-palette{ display:flex; flex-wrap:wrap; gap:6px; }
+.map-grid{
+  display:flex; flex-direction:column; gap:3px;
+  background: var(--card); border:1px solid var(--border); border-radius: var(--radius-sm);
+  padding:8px; overflow-x:auto;
+}
+.map-row{ display:flex; gap:3px; }
+.map-tile{
+  width: 44px; height: 44px; flex: 0 0 44px;
+  background: var(--bg); border:1px solid var(--border); border-radius:6px;
+  display:flex; align-items:center; justify-content:center; position:relative;
+  cursor:pointer; font-size:1.3rem;
+}
+.map-tile.empty{ background: repeating-linear-gradient(45deg, var(--bg), var(--bg) 6px, var(--card) 6px, var(--card) 12px); }
+.map-tile.locked{ cursor:default; opacity:0.5; }
+.map-tile .map-lock{ font-size:1rem; opacity:0.7; }
+.map-tile .map-terrain-emoji{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:1.4rem; opacity:0.55; }
+.map-tile .map-animal-emoji{ position:relative; font-size:1.3rem; }
+
 main{ flex:1; padding: 4px 16px 90px; overflow-y:auto; }
 
 /* ---- Timer screen ---- */

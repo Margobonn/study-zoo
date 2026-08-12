@@ -95,6 +95,17 @@ const HABITATS = [
   { id:'fantasia', label:'Fantasía', emoji:'✨' },
 ];
 
+// Central config for the playable Zoo Tycoon-style map (etapa 3). Kept
+// together for easy rebalancing, same pattern as SHOP_* tables.
+const MAP_COLS = 6;
+const MAP_ROWS_TOTAL = 12;
+const MAP_STARTING_ROWS = 2;
+const MAP_MINUTES_PER_ROW_UNLOCK = 60; // cada 60 min de estudio acumulados desbloquea una fila más
+
+function getUnlockedMapRows(totalStudyMinutes){
+  return Math.min(MAP_ROWS_TOTAL, MAP_STARTING_ROWS + Math.floor(totalStudyMinutes / MAP_MINUTES_PER_ROW_UNLOCK));
+}
+
 const RARITY_META = {
   common:    { label:'Común',      color:'var(--common)'    },
   uncommon:  { label:'Poco común', color:'var(--uncommon)'  },
@@ -157,6 +168,10 @@ function defaultState(){
     animals: [],
     unlockedSpeciesIds: [], // time-threshold reached, purchasable in the shop but not yet owned
     sessionLog: [], // { ts, dateKey, minutes }
+    map: {
+      tiles: {},       // "x_y" -> habitatId painted on that tile (absent = no terrain yet)
+      placements: {},  // "x_y" -> animal instance id placed on that tile
+    },
   };
 }
 
@@ -173,6 +188,10 @@ function normalizeState(parsed){
     stats: { ...base.stats, ...(parsed.stats||{}) },
     sessionLog: parsed.sessionLog || [],
     unlockedSpeciesIds: parsed.unlockedSpeciesIds || [],
+    map: {
+      tiles: (parsed.map && parsed.map.tiles) || {},
+      placements: (parsed.map && parsed.map.placements) || {},
+    },
   };
 }
 
@@ -687,6 +706,74 @@ export default function App(){
     setUnlockQueue(q => [...q, { species, instance: newInstance }]);
   };
 
+  // Playable map (etapa 3). x/y are validated against the currently
+  // unlocked area (derived from totalStudyMinutes, see getUnlockedMapRows)
+  // so a stale/replayed click can't paint or place outside it.
+  const paintMapTerrain = (x, y, habitatId) => {
+    const key = `${x}_${y}`;
+    if(state.map.placements[key]){
+      showToast('Sacá al animal de esta casilla antes de cambiar el terreno');
+      return;
+    }
+    const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
+    if(y >= unlockedRows) return;
+    setState(prev => {
+      if(!prev) return prev;
+      return { ...prev, map: { ...prev.map, tiles: { ...prev.map.tiles, [key]: habitatId } } };
+    });
+  };
+
+  const clearMapTerrain = (x, y) => {
+    const key = `${x}_${y}`;
+    if(state.map.placements[key]){
+      showToast('Sacá al animal de esta casilla antes de cambiar el terreno');
+      return;
+    }
+    setState(prev => {
+      if(!prev) return prev;
+      const tiles = { ...prev.map.tiles };
+      delete tiles[key];
+      return { ...prev, map: { ...prev.map, tiles } };
+    });
+  };
+
+  const placeAnimalOnMap = (x, y, animalId) => {
+    const key = `${x}_${y}`;
+    const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
+    if(y >= unlockedRows) return;
+    if(state.map.placements[key]){
+      showToast('Esa casilla ya tiene un animal');
+      return;
+    }
+    const animal = state.animals.find(a => a.id === animalId);
+    if(!animal) return;
+    const species = SPECIES.find(s => s.id === animal.speciesId);
+    const terrainHere = state.map.tiles[key];
+    if(!terrainHere){
+      showToast('Esta casilla no tiene terreno. ¡Pintá un hábitat primero!');
+      return;
+    }
+    if(terrainHere !== species.habitat){
+      const habitatNeeded = HABITATS.find(h => h.id === species.habitat);
+      showToast(`¡A ${species.name} no le gusta este lugar! Necesita ${habitatNeeded.label.toLowerCase()} ${habitatNeeded.emoji}`);
+      return;
+    }
+    setState(prev => {
+      if(!prev) return prev;
+      return { ...prev, map: { ...prev.map, placements: { ...prev.map.placements, [key]: animalId } } };
+    });
+  };
+
+  const removeAnimalFromMap = (x, y) => {
+    const key = `${x}_${y}`;
+    setState(prev => {
+      if(!prev) return prev;
+      const placements = { ...prev.map.placements };
+      delete placements[key];
+      return { ...prev, map: { ...prev.map, placements } };
+    });
+  };
+
   const resetAllData = () => {
     cancelAllNotifications();
     setState(defaultState());
@@ -761,6 +848,10 @@ export default function App(){
           <ZooScreen
             state={state}
             onSelect={(animal) => setSelectedAnimalId(animal.id)}
+            onPaintTerrain={paintMapTerrain}
+            onClearTerrain={clearMapTerrain}
+            onPlaceAnimal={placeAnimalOnMap}
+            onRemoveAnimal={removeAnimalFromMap}
           />
         )}
         {tab === 'shop' && (
@@ -983,7 +1074,7 @@ function AvailableCard({ species }){
   );
 }
 
-function ZooScreen({ state, onSelect }){
+function ZooScreen({ state, onSelect, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal }){
   const [rarityFilter, setRarityFilter] = useState('all');
   const [stateFilter, setStateFilter] = useState('all');
   const [speciesQuery, setSpeciesQuery] = useState('');
@@ -1012,12 +1103,17 @@ function ZooScreen({ state, onSelect }){
     return state.animals.filter(matchesFilters).sort((a,b) => b.obtainedAt - a.obtainedAt);
   }, [state.animals, matchesFilters]);
 
+  const viewToggle = (
+    <div className="filters">
+      <span className={'filter-chip ' + (viewMode==='grid'?'active':'')} onClick={()=>setViewMode('grid')}>🔲 Grilla</span>
+      <span className={'filter-chip ' + (viewMode==='habitat'?'active':'')} onClick={()=>setViewMode('habitat')}>🗺️ Hábitats</span>
+      <span className={'filter-chip ' + (viewMode==='map'?'active':'')} onClick={()=>setViewMode('map')}>🎮 Mapa</span>
+    </div>
+  );
+
   const filters = (
     <React.Fragment>
-      <div className="filters">
-        <span className={'filter-chip ' + (viewMode==='grid'?'active':'')} onClick={()=>setViewMode('grid')}>🔲 Grilla</span>
-        <span className={'filter-chip ' + (viewMode==='habitat'?'active':'')} onClick={()=>setViewMode('habitat')}>🗺️ Hábitats</span>
-      </div>
+      {viewToggle}
       <input
         className="species-search"
         type="search"
@@ -1038,6 +1134,24 @@ function ZooScreen({ state, onSelect }){
       </div>
     </React.Fragment>
   );
+
+  if(viewMode === 'map'){
+    return (
+      <React.Fragment>
+        <div className="zoo-header">
+          <div className="zoo-count">{uniqueSpeciesCount} de {SPECIES.length} especies · {state.animals.length} animales</div>
+        </div>
+        {viewToggle}
+        <MapScreen
+          state={state}
+          onPaintTerrain={onPaintTerrain}
+          onClearTerrain={onClearTerrain}
+          onPlaceAnimal={onPlaceAnimal}
+          onRemoveAnimal={onRemoveAnimal}
+        />
+      </React.Fragment>
+    );
+  }
 
   return (
     <React.Fragment>
@@ -1123,6 +1237,147 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
           )}
         </div>
       ))}
+    </React.Fragment>
+  );
+}
+
+/* ============ MAP SCREEN (etapa 3: modo jugable) ============ */
+
+function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal }){
+  const [mode, setMode] = useState(null); // { kind:'terrain', habitatId } | { kind:'eraser' } | { kind:'animal', animalId }
+
+  const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
+  const minutesForNextRow = (unlockedRows - MAP_STARTING_ROWS + 1) * MAP_MINUTES_PER_ROW_UNLOCK;
+  const minutesToNextRow = Math.max(0, minutesForNextRow - state.stats.totalStudyMinutes);
+
+  const placedAnimalIds = useMemo(() => new Set(Object.values(state.map.placements)), [state.map.placements]);
+  const unplacedAnimals = useMemo(
+    () => state.animals.filter(a => !placedAnimalIds.has(a.id)),
+    [state.animals, placedAnimalIds]
+  );
+
+  const toggleTerrainBrush = (habitatId) => {
+    setMode(m => (m && m.kind === 'terrain' && m.habitatId === habitatId) ? null : { kind: 'terrain', habitatId });
+  };
+  const toggleEraser = () => {
+    setMode(m => (m && m.kind === 'eraser') ? null : { kind: 'eraser' });
+  };
+  const toggleAnimal = (animalId) => {
+    setMode(m => (m && m.kind === 'animal' && m.animalId === animalId) ? null : { kind: 'animal', animalId });
+  };
+
+  const handleTileClick = (x, y, locked) => {
+    if(locked) return;
+    const key = `${x}_${y}`;
+    if(mode && mode.kind === 'animal'){
+      onPlaceAnimal(x, y, mode.animalId);
+      setMode(null);
+      return;
+    }
+    if(mode && mode.kind === 'terrain'){
+      onPaintTerrain(x, y, mode.habitatId);
+      return;
+    }
+    if(mode && mode.kind === 'eraser'){
+      onClearTerrain(x, y);
+      return;
+    }
+    if(state.map.placements[key]) onRemoveAnimal(x, y);
+  };
+
+  const rows = [];
+  for(let y = 0; y < MAP_ROWS_TOTAL; y++){
+    const cols = [];
+    for(let x = 0; x < MAP_COLS; x++){
+      const key = `${x}_${y}`;
+      const locked = y >= unlockedRows;
+      const terrainId = state.map.tiles[key];
+      const terrain = terrainId ? HABITATS.find(h => h.id === terrainId) : null;
+      const placedAnimalId = state.map.placements[key];
+      const placedAnimal = placedAnimalId ? state.animals.find(a => a.id === placedAnimalId) : null;
+      const placedSpecies = placedAnimal ? SPECIES.find(s => s.id === placedAnimal.speciesId) : null;
+      cols.push(
+        <div
+          key={key}
+          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty')}
+          onClick={() => handleTileClick(x, y, locked)}
+          title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : undefined}
+        >
+          {locked ? (
+            <span className="map-lock">🔒</span>
+          ) : (
+            <React.Fragment>
+              {terrain && <span className="map-terrain-emoji">{terrain.emoji}</span>}
+              {placedSpecies && <span className="map-animal-emoji">{placedSpecies.emoji}</span>}
+            </React.Fragment>
+          )}
+        </div>
+      );
+    }
+    rows.push(<div className="map-row" key={y}>{cols}</div>);
+  }
+
+  return (
+    <React.Fragment>
+      <div style={{fontSize:'0.78rem', color:'var(--text-dim)', marginBottom:10}}>
+        {mode && mode.kind === 'terrain' && `Tocá una casilla desbloqueada para pintar ${HABITATS.find(h=>h.id===mode.habitatId).label.toLowerCase()}.`}
+        {mode && mode.kind === 'eraser' && 'Tocá una casilla para borrar su terreno.'}
+        {mode && mode.kind === 'animal' && `Tocá una casilla con el hábitat correcto para ubicar a ${state.animals.find(a=>a.id===mode.animalId)?.name}.`}
+        {!mode && 'Elegí un terreno o un animal para empezar a decorar tu mapa.'}
+      </div>
+
+      <div className="map-toolbar">
+        <div className="map-toolbar-label">Terrenos</div>
+        <div className="map-palette">
+          {HABITATS.map(hab => (
+            <span
+              key={hab.id}
+              className={'filter-chip ' + (mode && mode.kind==='terrain' && mode.habitatId===hab.id ? 'active' : '')}
+              onClick={() => toggleTerrainBrush(hab.id)}
+            >
+              {hab.emoji} {hab.label}
+            </span>
+          ))}
+          <span
+            className={'filter-chip ' + (mode && mode.kind==='eraser' ? 'active' : '')}
+            onClick={toggleEraser}
+          >
+            🧹 Borrar
+          </span>
+        </div>
+      </div>
+
+      <div className="map-toolbar">
+        <div className="map-toolbar-label">Tus animales sin ubicar ({unplacedAnimals.length})</div>
+        {unplacedAnimals.length === 0 ? (
+          <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>
+            {state.animals.length === 0 ? 'Todavía no tenés animales. Comprá alguno en la Tienda.' : '¡Ya ubicaste a todos tus animales en el mapa!'}
+          </div>
+        ) : (
+          <div className="map-palette">
+            {unplacedAnimals.map(a => {
+              const sp = SPECIES.find(s => s.id === a.speciesId);
+              return (
+                <span
+                  key={a.id}
+                  className={'filter-chip ' + (mode && mode.kind==='animal' && mode.animalId===a.id ? 'active' : '')}
+                  onClick={() => toggleAnimal(a.id)}
+                >
+                  {sp.emoji} {a.name}
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="map-grid">{rows}</div>
+
+      {unlockedRows < MAP_ROWS_TOTAL && (
+        <div style={{fontSize:'0.72rem', color:'var(--text-dim)', marginTop:10, textAlign:'center'}}>
+          🔒 Estudiá {minutesToNextRow} min más para desbloquear la próxima fila del mapa
+        </div>
+      )}
     </React.Fragment>
   );
 }
