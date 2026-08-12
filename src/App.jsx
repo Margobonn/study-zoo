@@ -145,6 +145,19 @@ const SHOP_ANIMAL_PRICE_BY_RARITY = {
   legendary: 5000,
 };
 
+// Cosmetic only — no habitat restriction, placeable on any unlocked empty
+// tile regardless of terrain.
+const SHOP_DECORATIONS = [
+  { id:'flowers', label:'Flores',          emoji:'🌸', price:25 },
+  { id:'rock',    label:'Roca',            emoji:'🪨', price:30 },
+  { id:'tree',    label:'Árbol',           emoji:'🌳', price:40 },
+  { id:'lantern', label:'Farolito',        emoji:'🏮', price:60 },
+  { id:'fountain',label:'Fuente',          emoji:'⛲', price:90 },
+  { id:'cabin',   label:'Cabañita',        emoji:'🛖', price:150 },
+  { id:'tent',    label:'Carpa de feria',  emoji:'🎪', price:220 },
+  { id:'statue',  label:'Estatua',         emoji:'🗿', price:300 },
+];
+
 /* ============ STORAGE ============ */
 
 const STORAGE_KEY = 'study-zoo-state-v1';
@@ -168,9 +181,11 @@ function defaultState(){
     animals: [],
     unlockedSpeciesIds: [], // time-threshold reached, purchasable in the shop but not yet owned
     sessionLog: [], // { ts, dateKey, minutes }
+    decorationInventory: {}, // decorationId -> total count owned (placed + unplaced)
     map: {
-      tiles: {},       // "x_y" -> habitatId painted on that tile (absent = no terrain yet)
-      placements: {},  // "x_y" -> animal instance id placed on that tile
+      tiles: {},        // "x_y" -> habitatId painted on that tile (absent = no terrain yet)
+      placements: {},   // "x_y" -> animal instance id placed on that tile
+      decorations: {},  // "x_y" -> decorationId placed on that tile
     },
   };
 }
@@ -188,9 +203,11 @@ function normalizeState(parsed){
     stats: { ...base.stats, ...(parsed.stats||{}) },
     sessionLog: parsed.sessionLog || [],
     unlockedSpeciesIds: parsed.unlockedSpeciesIds || [],
+    decorationInventory: parsed.decorationInventory || {},
     map: {
       tiles: (parsed.map && parsed.map.tiles) || {},
       placements: (parsed.map && parsed.map.placements) || {},
+      decorations: (parsed.map && parsed.map.decorations) || {},
     },
   };
 }
@@ -706,9 +723,10 @@ export default function App(){
     setUnlockQueue(q => [...q, { species, instance: newInstance }]);
   };
 
-  // Playable map (etapa 3). x/y are validated against the currently
+  // Playable map (etapa 3/4). x/y are validated against the currently
   // unlocked area (derived from totalStudyMinutes, see getUnlockedMapRows)
-  // so a stale/replayed click can't paint or place outside it.
+  // so a stale/replayed click can't paint or place outside it. A tile can
+  // hold terrain plus at most one occupant (an animal OR a decoration).
   const paintMapTerrain = (x, y, habitatId) => {
     const key = `${x}_${y}`;
     if(state.map.placements[key]){
@@ -741,8 +759,8 @@ export default function App(){
     const key = `${x}_${y}`;
     const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
     if(y >= unlockedRows) return;
-    if(state.map.placements[key]){
-      showToast('Esa casilla ya tiene un animal');
+    if(state.map.placements[key] || state.map.decorations[key]){
+      showToast('Esa casilla ya está ocupada');
       return;
     }
     const animal = state.animals.find(a => a.id === animalId);
@@ -771,6 +789,111 @@ export default function App(){
       const placements = { ...prev.map.placements };
       delete placements[key];
       return { ...prev, map: { ...prev.map, placements } };
+    });
+  };
+
+  // Moving an already-placed animal to another tile (drag & drop, etapa 4)
+  // re-runs the same habitat/occupancy checks as a fresh placement.
+  const moveAnimalOnMap = (fromX, fromY, toX, toY) => {
+    if(fromX === toX && fromY === toY) return;
+    const fromKey = `${fromX}_${fromY}`;
+    const toKey = `${toX}_${toY}`;
+    const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
+    if(toY >= unlockedRows) return;
+    const animalId = state.map.placements[fromKey];
+    if(!animalId) return;
+    if(state.map.placements[toKey] || state.map.decorations[toKey]){
+      showToast('Esa casilla ya está ocupada');
+      return;
+    }
+    const animal = state.animals.find(a => a.id === animalId);
+    const species = SPECIES.find(s => s.id === animal.speciesId);
+    const terrainHere = state.map.tiles[toKey];
+    if(!terrainHere){
+      showToast('Esa casilla no tiene terreno. ¡Pintá un hábitat primero!');
+      return;
+    }
+    if(terrainHere !== species.habitat){
+      const habitatNeeded = HABITATS.find(h => h.id === species.habitat);
+      showToast(`¡A ${species.name} no le gusta este lugar! Necesita ${habitatNeeded.label.toLowerCase()} ${habitatNeeded.emoji}`);
+      return;
+    }
+    setState(prev => {
+      if(!prev) return prev;
+      const placements = { ...prev.map.placements };
+      delete placements[fromKey];
+      placements[toKey] = animalId;
+      return { ...prev, map: { ...prev.map, placements } };
+    });
+  };
+
+  const buyDecoration = (decorationId) => {
+    const decoration = SHOP_DECORATIONS.find(d => d.id === decorationId);
+    if(!decoration) return;
+    if(state.coins < decoration.price){
+      showToast(`Te faltan ${COIN_NAME_PLURAL.toLowerCase()} para eso`);
+      return;
+    }
+    setState(prev => {
+      if(!prev || prev.coins < decoration.price) return prev;
+      return {
+        ...prev,
+        coins: prev.coins - decoration.price,
+        decorationInventory: {
+          ...prev.decorationInventory,
+          [decorationId]: (prev.decorationInventory[decorationId] || 0) + 1,
+        },
+        stats: { ...prev.stats, totalCoinsSpent: prev.stats.totalCoinsSpent + decoration.price },
+      };
+    });
+    showToast(`${decoration.emoji} ${decoration.label} comprada`);
+  };
+
+  const placeDecorationOnMap = (x, y, decorationId) => {
+    const key = `${x}_${y}`;
+    const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
+    if(y >= unlockedRows) return;
+    if(state.map.placements[key] || state.map.decorations[key]){
+      showToast('Esa casilla ya está ocupada');
+      return;
+    }
+    const owned = state.decorationInventory[decorationId] || 0;
+    const placedCount = Object.values(state.map.decorations).filter(id => id === decorationId).length;
+    if(placedCount >= owned) return;
+    setState(prev => {
+      if(!prev) return prev;
+      return { ...prev, map: { ...prev.map, decorations: { ...prev.map.decorations, [key]: decorationId } } };
+    });
+  };
+
+  const removeDecorationFromMap = (x, y) => {
+    const key = `${x}_${y}`;
+    setState(prev => {
+      if(!prev) return prev;
+      const decorations = { ...prev.map.decorations };
+      delete decorations[key];
+      return { ...prev, map: { ...prev.map, decorations } };
+    });
+  };
+
+  const moveDecorationOnMap = (fromX, fromY, toX, toY) => {
+    if(fromX === toX && fromY === toY) return;
+    const fromKey = `${fromX}_${fromY}`;
+    const toKey = `${toX}_${toY}`;
+    const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
+    if(toY >= unlockedRows) return;
+    const decorationId = state.map.decorations[fromKey];
+    if(!decorationId) return;
+    if(state.map.placements[toKey] || state.map.decorations[toKey]){
+      showToast('Esa casilla ya está ocupada');
+      return;
+    }
+    setState(prev => {
+      if(!prev) return prev;
+      const decorations = { ...prev.map.decorations };
+      delete decorations[fromKey];
+      decorations[toKey] = decorationId;
+      return { ...prev, map: { ...prev.map, decorations } };
     });
   };
 
@@ -852,10 +975,19 @@ export default function App(){
             onClearTerrain={clearMapTerrain}
             onPlaceAnimal={placeAnimalOnMap}
             onRemoveAnimal={removeAnimalFromMap}
+            onMoveAnimal={moveAnimalOnMap}
+            onPlaceDecoration={placeDecorationOnMap}
+            onRemoveDecoration={removeDecorationFromMap}
+            onMoveDecoration={moveDecorationOnMap}
           />
         )}
         {tab === 'shop' && (
-          <ShopScreen state={state} onBuyFoodBundle={buyFoodBundle} onBuyAnimal={buyAnimal} />
+          <ShopScreen
+            state={state}
+            onBuyFoodBundle={buyFoodBundle}
+            onBuyAnimal={buyAnimal}
+            onBuyDecoration={buyDecoration}
+          />
         )}
         {tab === 'stats' && (
           <StatsScreen state={state} />
@@ -1074,7 +1206,10 @@ function AvailableCard({ species }){
   );
 }
 
-function ZooScreen({ state, onSelect, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal }){
+function ZooScreen({
+  state, onSelect, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal, onMoveAnimal,
+  onPlaceDecoration, onRemoveDecoration, onMoveDecoration,
+}){
   const [rarityFilter, setRarityFilter] = useState('all');
   const [stateFilter, setStateFilter] = useState('all');
   const [speciesQuery, setSpeciesQuery] = useState('');
@@ -1148,6 +1283,10 @@ function ZooScreen({ state, onSelect, onPaintTerrain, onClearTerrain, onPlaceAni
           onClearTerrain={onClearTerrain}
           onPlaceAnimal={onPlaceAnimal}
           onRemoveAnimal={onRemoveAnimal}
+          onMoveAnimal={onMoveAnimal}
+          onPlaceDecoration={onPlaceDecoration}
+          onRemoveDecoration={onRemoveDecoration}
+          onMoveDecoration={onMoveDecoration}
         />
       </React.Fragment>
     );
@@ -1243,8 +1382,15 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
 
 /* ============ MAP SCREEN (etapa 3: modo jugable) ============ */
 
-function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal }){
-  const [mode, setMode] = useState(null); // { kind:'terrain', habitatId } | { kind:'eraser' } | { kind:'animal', animalId }
+function MapScreen({
+  state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal, onMoveAnimal,
+  onPlaceDecoration, onRemoveDecoration, onMoveDecoration,
+}){
+  // { kind:'terrain', habitatId } | { kind:'eraser' } | { kind:'animal', animalId } | { kind:'decoration', decorationId }
+  const [mode, setMode] = useState(null);
+  const [dragPos, setDragPos] = useState(null); // { clientX, clientY, emoji } while dragging an occupant to reposition it
+  const dragRef = useRef(null);
+  const suppressClickRef = useRef(false);
 
   const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
   const minutesForNextRow = (unlockedRows - MAP_STARTING_ROWS + 1) * MAP_MINUTES_PER_ROW_UNLOCK;
@@ -1256,6 +1402,53 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
     [state.animals, placedAnimalIds]
   );
 
+  const unplacedDecorations = useMemo(() => {
+    const placedCounts = {};
+    Object.values(state.map.decorations).forEach(id => { placedCounts[id] = (placedCounts[id] || 0) + 1; });
+    return SHOP_DECORATIONS
+      .map(d => ({ ...d, unplacedCount: (state.decorationInventory[d.id] || 0) - (placedCounts[d.id] || 0) }))
+      .filter(d => d.unplacedCount > 0);
+  }, [state.decorationInventory, state.map.decorations]);
+
+  // Reposition drag & drop for already-placed animals/decorations (etapa 4).
+  // Pointer Events cover mouse and touch alike. A short movement threshold
+  // tells a real drag apart from a plain tap so tapping to unplace (below)
+  // keeps working; when a drag *does* complete, the click that browsers
+  // synthesize right after pointerup is swallowed via suppressClickRef so
+  // it doesn't also fire the tap-to-unplace handler on the drop tile.
+  useEffect(() => {
+    const handleMove = (e) => {
+      const d = dragRef.current;
+      if(!d) return;
+      if(!d.moved && (Math.abs(e.clientX - d.startClientX) > 8 || Math.abs(e.clientY - d.startClientY) > 8)){
+        d.moved = true;
+      }
+      if(d.moved) setDragPos({ clientX: e.clientX, clientY: e.clientY, emoji: d.emoji });
+    };
+    const handleUp = (e) => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDragPos(null);
+      if(!d || !d.moved) return;
+      suppressClickRef.current = true;
+      setTimeout(() => { suppressClickRef.current = false; }, 0);
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const tileEl = el ? el.closest('.map-tile') : null;
+      if(!tileEl) return;
+      const toX = Number(tileEl.dataset.x);
+      const toY = Number(tileEl.dataset.y);
+      if(Number.isNaN(toX) || Number.isNaN(toY)) return;
+      if(d.kind === 'animal') onMoveAnimal(d.fromX, d.fromY, toX, toY);
+      else onMoveDecoration(d.fromX, d.fromY, toX, toY);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, [onMoveAnimal, onMoveDecoration]);
+
   const toggleTerrainBrush = (habitatId) => {
     setMode(m => (m && m.kind === 'terrain' && m.habitatId === habitatId) ? null : { kind: 'terrain', habitatId });
   };
@@ -1265,12 +1458,26 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
   const toggleAnimal = (animalId) => {
     setMode(m => (m && m.kind === 'animal' && m.animalId === animalId) ? null : { kind: 'animal', animalId });
   };
+  const toggleDecoration = (decorationId) => {
+    setMode(m => (m && m.kind === 'decoration' && m.decorationId === decorationId) ? null : { kind: 'decoration', decorationId });
+  };
+
+  const handleTilePointerDown = (x, y, kind, emoji, e) => {
+    if(mode) return; // a placement/terrain brush is active — this tap places/paints, it doesn't start a drag
+    dragRef.current = { kind, fromX: x, fromY: y, startClientX: e.clientX, startClientY: e.clientY, moved: false, emoji };
+  };
 
   const handleTileClick = (x, y, locked) => {
+    if(suppressClickRef.current){ suppressClickRef.current = false; return; }
     if(locked) return;
     const key = `${x}_${y}`;
     if(mode && mode.kind === 'animal'){
       onPlaceAnimal(x, y, mode.animalId);
+      setMode(null);
+      return;
+    }
+    if(mode && mode.kind === 'decoration'){
+      onPlaceDecoration(x, y, mode.decorationId);
       setMode(null);
       return;
     }
@@ -1283,6 +1490,7 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
       return;
     }
     if(state.map.placements[key]) onRemoveAnimal(x, y);
+    else if(state.map.decorations[key]) onRemoveDecoration(x, y);
   };
 
   const rows = [];
@@ -1296,19 +1504,26 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
       const placedAnimalId = state.map.placements[key];
       const placedAnimal = placedAnimalId ? state.animals.find(a => a.id === placedAnimalId) : null;
       const placedSpecies = placedAnimal ? SPECIES.find(s => s.id === placedAnimal.speciesId) : null;
+      const placedDecorationId = state.map.decorations[key];
+      const placedDecoration = placedDecorationId ? SHOP_DECORATIONS.find(d => d.id === placedDecorationId) : null;
+      const occupantEmoji = placedSpecies ? placedSpecies.emoji : (placedDecoration ? placedDecoration.emoji : null);
       cols.push(
         <div
           key={key}
           className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty')}
+          data-x={x}
+          data-y={y}
           onClick={() => handleTileClick(x, y, locked)}
+          onPointerDown={!locked && occupantEmoji ? (e) => handleTilePointerDown(x, y, placedSpecies ? 'animal' : 'decoration', occupantEmoji, e) : undefined}
           title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : undefined}
+          style={{touchAction: 'none'}}
         >
           {locked ? (
             <span className="map-lock">🔒</span>
           ) : (
             <React.Fragment>
               {terrain && <span className="map-terrain-emoji">{terrain.emoji}</span>}
-              {placedSpecies && <span className="map-animal-emoji">{placedSpecies.emoji}</span>}
+              {occupantEmoji && <span className="map-animal-emoji">{occupantEmoji}</span>}
             </React.Fragment>
           )}
         </div>
@@ -1323,7 +1538,8 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
         {mode && mode.kind === 'terrain' && `Tocá una casilla desbloqueada para pintar ${HABITATS.find(h=>h.id===mode.habitatId).label.toLowerCase()}.`}
         {mode && mode.kind === 'eraser' && 'Tocá una casilla para borrar su terreno.'}
         {mode && mode.kind === 'animal' && `Tocá una casilla con el hábitat correcto para ubicar a ${state.animals.find(a=>a.id===mode.animalId)?.name}.`}
-        {!mode && 'Elegí un terreno o un animal para empezar a decorar tu mapa.'}
+        {mode && mode.kind === 'decoration' && `Tocá una casilla vacía para ubicar ${SHOP_DECORATIONS.find(d=>d.id===mode.decorationId).label.toLowerCase()}.`}
+        {!mode && 'Elegí un terreno, un animal o una decoración, o arrastrá algo ya ubicado para moverlo.'}
       </div>
 
       <div className="map-toolbar">
@@ -1371,11 +1587,39 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
         )}
       </div>
 
+      <div className="map-toolbar">
+        <div className="map-toolbar-label">Tus decoraciones sin ubicar ({unplacedDecorations.reduce((sum,d)=>sum+d.unplacedCount,0)})</div>
+        {unplacedDecorations.length === 0 ? (
+          <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>Comprá decoraciones en la Tienda para embellecer tu mapa.</div>
+        ) : (
+          <div className="map-palette">
+            {unplacedDecorations.map(d => (
+              <span
+                key={d.id}
+                className={'filter-chip ' + (mode && mode.kind==='decoration' && mode.decorationId===d.id ? 'active' : '')}
+                onClick={() => toggleDecoration(d.id)}
+              >
+                {d.emoji} {d.label} ×{d.unplacedCount}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="map-grid">{rows}</div>
 
       {unlockedRows < MAP_ROWS_TOTAL && (
         <div style={{fontSize:'0.72rem', color:'var(--text-dim)', marginTop:10, textAlign:'center'}}>
           🔒 Estudiá {minutesToNextRow} min más para desbloquear la próxima fila del mapa
+        </div>
+      )}
+
+      {dragPos && (
+        <div
+          className="map-drag-ghost"
+          style={{ left: dragPos.clientX, top: dragPos.clientY }}
+        >
+          {dragPos.emoji}
         </div>
       )}
     </React.Fragment>
@@ -1384,7 +1628,7 @@ function MapScreen({ state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRem
 
 /* ============ SHOP SCREEN ============ */
 
-function ShopScreen({ state, onBuyFoodBundle, onBuyAnimal }){
+function ShopScreen({ state, onBuyFoodBundle, onBuyAnimal, onBuyDecoration }){
   const purchasableSpecies = state.unlockedSpeciesIds
     .map(id => SPECIES.find(s => s.id === id))
     .filter(Boolean)
@@ -1455,8 +1699,25 @@ function ShopScreen({ state, onBuyFoodBundle, onBuyAnimal }){
 
       <div className="config-section">
         <h3>🌳 Decoraciones</h3>
-        <div style={{fontSize:'0.8rem', color:'var(--text-dim)'}}>
-          Próximamente: decorá tu zoológico jugable.
+        <div className="shop-grid">
+          {SHOP_DECORATIONS.map(dec => {
+            const canAfford = state.coins >= dec.price;
+            const owned = state.decorationInventory[dec.id] || 0;
+            return (
+              <div key={dec.id} className="shop-card">
+                <div className="shop-card-emoji">{dec.emoji}</div>
+                <div className="shop-card-label">{dec.label}</div>
+                <div className="shop-card-detail">{owned > 0 ? `Tenés ${owned}` : 'Cosmética'}</div>
+                <button
+                  className="btn primary small"
+                  disabled={!canAfford}
+                  onClick={() => onBuyDecoration(dec.id)}
+                >
+                  {COIN_EMOJI} {dec.price}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
     </React.Fragment>
