@@ -1321,14 +1321,14 @@ function ZooScreen({
 
       {filters}
 
-      {state.animals.length === 0 ? (
-        <div className="empty-state">
-          <div className="big">🐣</div>
-          <div>Tu zoológico está vacío todavía.</div>
-          <div>Completa una sesión de estudio para conseguir tu primer animal.</div>
-        </div>
-      ) : viewMode === 'grid' ? (
-        filtered.length === 0 ? (
+      {viewMode === 'grid' ? (
+        state.animals.length === 0 ? (
+          <div className="empty-state">
+            <div className="big">🐣</div>
+            <div>Tu zoológico está vacío todavía.</div>
+            <div>Completa una sesión de estudio para conseguir tu primer animal.</div>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="empty-state">
             <div className="big">🔍</div>
             <div>Ningún animal coincide con estos filtros.</div>
@@ -1341,6 +1341,9 @@ function ZooScreen({
           </div>
         )
       ) : (
+        // Hábitats always shows the full 50-species catalog (owned,
+        // purchasable, or locked) regardless of how many animals you own —
+        // that's the whole point of it: seeing what's still ahead of you.
         <HabitatView state={state} rarityFilter={rarityFilter} speciesQuery={query} matchesFilters={matchesFilters} onSelect={onSelect} />
       )}
     </React.Fragment>
