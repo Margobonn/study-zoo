@@ -115,12 +115,6 @@ const RARITY_META = {
   legendary: { label:'Legendario', color:'var(--legendary)' },
 };
 
-const PET_NAMES = [
-  'Luna','Rocky','Nube','Coco','Mango','Kiwi','Simba','Nala','Toby','Bella',
-  'Milo','Olivia','Rex','Maya','Pepe','Lola','Bruno','Nina','Max','Sasha',
-  'Leo','Frida','Chispa','Canela','Trufa','Pipo','Nube','Estrella','Sol','Bongo'
-];
-
 const FOOD_PER_5MIN = 1;
 
 // ---- Zoo economy: "Huellitas" (coins), earned 1 per minute studied
@@ -254,12 +248,14 @@ function getNewlyAvailableSpecies(totalMinutes, ownedAnimals, unlockedSpeciesIds
     .sort((a, b) => a.tiempoMinimoMinutos - b.tiempoMinimoMinutos);
 }
 
+// Defaults to the species' own name (e.g. "Conejo") rather than a random
+// pet name — the user names their own animals via AnimalDetailModal.
 function makeAnimalInstance(species){
   const now = Date.now();
   return {
     id: 'a_' + now + '_' + Math.floor(Math.random()*100000),
     speciesId: species.id,
-    name: PET_NAMES[Math.floor(Math.random()*PET_NAMES.length)],
+    name: species.name,
     obtainedAt: now,
     lastFed: now,
     feedCount: 0,
@@ -683,6 +679,18 @@ export default function App(){
     showToast('¡Animal alimentado! 🍖');
   };
 
+  const renameAnimal = (animalId, newName) => {
+    const trimmed = newName.trim();
+    if(!trimmed) return;
+    setState(prev => {
+      if(!prev) return prev;
+      return {
+        ...prev,
+        animals: prev.animals.map(a => a.id === animalId ? { ...a, name: trimmed } : a),
+      };
+    });
+  };
+
   // Affordability is decided from the `state` already rendered on screen
   // (not from inside the setState updater) because the timer tick effect
   // fires setState very frequently — when a tick update is already pending,
@@ -1046,6 +1054,7 @@ export default function App(){
           animal={selectedAnimal}
           food={state.food}
           onFeed={feedAnimal}
+          onRename={renameAnimal}
           onClose={() => setSelectedAnimalId(null)}
         />
       )}
@@ -1196,10 +1205,11 @@ function AnimalCard({ animal, species, onSelect }){
 function LockedCard({ species, totalStudyMinutes }){
   const remaining = Math.max(0, species.tiempoMinimoMinutos - totalStudyMinutes);
   return (
-    <div className="animal-card locked" title="Todavía no descubierto">
+    <div className="animal-card locked" title="Todavía no desbloqueado">
+      <span className="map-lock lock-badge">🔒</span>
       <span className="rarity-dot dim" style={{background: RARITY_META[species.rarity].color}}></span>
-      <span className="emoji dim">❔</span>
-      <div className="nm">???</div>
+      <span className="emoji dim">{species.emoji}</span>
+      <div className="nm">{species.name}</div>
       <div className="lock-remaining">Faltan {remaining} min</div>
     </div>
   );
@@ -2203,8 +2213,8 @@ function NewAnimalModal({ data, onClose }){
         <div style={{color:'var(--text-dim)', fontSize:'0.85rem'}}>¡Nuevo animal desbloqueado!</div>
         <div className="big-emoji">{species.emoji}</div>
         <div style={{fontSize:'1.3rem', fontWeight:700}}>{instance.name}</div>
-        <div style={{color:'var(--text-dim)'}}>{species.name}</div>
         <span className="rarity-badge" style={{background: meta.color + '33', color: meta.color}}>{meta.label}</span>
+        <div style={{fontSize:'0.75rem', color:'var(--text-dim)', marginTop:8}}>Podés ponerle otro nombre desde el Zoológico ✏️</div>
         <div className="modal-actions">
           <button className="btn primary block" onClick={onClose}>¡Genial!</button>
         </div>
@@ -2213,7 +2223,7 @@ function NewAnimalModal({ data, onClose }){
   );
 }
 
-function AnimalDetailModal({ animal, food, onFeed, onClose }){
+function AnimalDetailModal({ animal, food, onFeed, onRename, onClose }){
   const sp = SPECIES.find(s => s.id === animal.speciesId);
   const meta = RARITY_META[sp.rarity];
   const hunger = computeHunger(animal);
@@ -2222,11 +2232,42 @@ function AnimalDetailModal({ animal, food, onFeed, onClose }){
   const feedCount = animal.feedCount || 0;
   const obtainedDate = new Date(animal.obtainedAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' });
 
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(animal.name);
+
+  const saveName = () => {
+    onRename(animal.id, nameInput);
+    setEditingName(false);
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className={'big-emoji stage-' + stage.key}>{sp.emoji}</div>
-        <div style={{fontSize:'1.3rem', fontWeight:700}}>{animal.name}</div>
+        {editingName ? (
+          <div style={{display:'flex', gap:6, alignItems:'center', justifyContent:'center'}}>
+            <input
+              autoFocus
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onKeyDown={e => { if(e.key === 'Enter') saveName(); if(e.key === 'Escape') setEditingName(false); }}
+              maxLength={20}
+              style={{fontSize:'1.1rem', fontWeight:700, textAlign:'center', width:140}}
+            />
+            <button className="btn primary small" onClick={saveName}>Guardar</button>
+          </div>
+        ) : (
+          <div style={{fontSize:'1.3rem', fontWeight:700, display:'flex', gap:6, alignItems:'center', justifyContent:'center'}}>
+            {animal.name}
+            <span
+              onClick={() => { setNameInput(animal.name); setEditingName(true); }}
+              style={{cursor:'pointer', fontSize:'0.85rem'}}
+              title="Cambiar nombre"
+            >
+              ✏️
+            </span>
+          </div>
+        )}
         <div style={{color:'var(--text-dim)'}}>{sp.name}</div>
         <span className="rarity-badge" style={{background: meta.color + '33', color: meta.color}}>{meta.label}</span>
 

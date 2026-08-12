@@ -251,9 +251,10 @@ nav.bottom-nav button.active{ color: var(--primary); background: rgba(255,138,92
 .empty-state{ text-align:center; color: var(--text-dim); padding: 40px 20px; }
 .empty-state .big{ font-size: 3rem; margin-bottom: 10px; }
 
-.animal-card.locked{ opacity:0.45; cursor:default; }
+.animal-card.locked{ opacity:0.65; cursor:default; }
 .animal-card.available{ cursor:default; border-color: var(--accent-2); border-style:dashed; }
 .animal-card .dim{ filter: grayscale(1); }
+.animal-card .lock-badge{ position:absolute; top:6px; right:6px; font-size:0.8rem; line-height:1; }
 .lock-remaining{ font-size:0.62rem; color: var(--text-dim); margin-top:4px; }
 
 /* ---- Growth stages ---- */
