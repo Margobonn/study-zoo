@@ -111,6 +111,29 @@ const PET_NAMES = [
 
 const FOOD_PER_5MIN = 1;
 
+// ---- Zoo economy: "Huellitas" (coins), earned 1 per minute studied
+// (every minute, not just extra — separate from the food/extra-minutes
+// system above). Central pricing table so balance tweaks live in one
+// place instead of scattered through the shop UI.
+const COIN_NAME = 'Huellita';
+const COIN_NAME_PLURAL = 'Huellitas';
+const COIN_EMOJI = '🐾';
+const COINS_PER_STUDY_MINUTE = 1;
+
+const SHOP_FOOD_BUNDLES = [
+  { id:'small', label:'Fardo Pequeño', emoji:'🌾', foodAmount:3, price:15 },
+  { id:'medium', label:'Fardo Mediano', emoji:'🌾', foodAmount:8, price:35 },
+  { id:'large', label:'Fardo Grande', emoji:'🌾', foodAmount:20, price:80 },
+];
+
+const SHOP_ANIMAL_PRICE_BY_RARITY = {
+  common: 120,
+  uncommon: 320,
+  rare: 750,
+  epic: 1800,
+  legendary: 5000,
+};
+
 /* ============ STORAGE ============ */
 
 const STORAGE_KEY = 'study-zoo-state-v1';
@@ -127,8 +150,10 @@ function defaultState(){
       sessionsToday: 0, lastSessionDateKey: null, streak: 0,
       totalStudyMinutes: 0, totalSessions: 0,
       totalFoodEarned: 0, totalFoodUsed: 0,
+      totalCoinsEarned: 0, totalCoinsSpent: 0,
     },
     food: 0,
+    coins: 0,
     animals: [],
     sessionLog: [], // { ts, dateKey, minutes }
   };
@@ -394,6 +419,7 @@ export default function App(){
         streak = (diff === 1) ? streak + 1 : 1;
         sessionsToday = 1;
       }
+      const coinsEarned = minutes * COINS_PER_STUDY_MINUTE;
       return {
         ...prev,
         stats: {
@@ -403,7 +429,9 @@ export default function App(){
           lastSessionDateKey: todayKey,
           totalStudyMinutes: prev.stats.totalStudyMinutes + minutes,
           totalSessions: prev.stats.totalSessions + 1,
+          totalCoinsEarned: prev.stats.totalCoinsEarned + coinsEarned,
         },
+        coins: prev.coins + coinsEarned,
         sessionLog: [...prev.sessionLog, { ts: Date.now(), dateKey: todayKey, minutes }],
         animals: [...prev.animals, ...newInstances],
       };
@@ -606,6 +634,28 @@ export default function App(){
     showToast('¡Animal alimentado! 🍖');
   };
 
+  const buyFoodBundle = (bundleId) => {
+    const bundle = SHOP_FOOD_BUNDLES.find(b => b.id === bundleId);
+    if(!bundle) return;
+    let bought = false;
+    setState(prev => {
+      if(!prev || prev.coins < bundle.price) return prev;
+      bought = true;
+      return {
+        ...prev,
+        coins: prev.coins - bundle.price,
+        food: prev.food + bundle.foodAmount,
+        stats: {
+          ...prev.stats,
+          totalFoodEarned: prev.stats.totalFoodEarned + bundle.foodAmount,
+          totalCoinsSpent: prev.stats.totalCoinsSpent + bundle.price,
+        },
+      };
+    });
+    if(bought) showToast(`+${bundle.foodAmount} 🍖 comida comprada`);
+    else showToast(`Te faltan ${COIN_NAME_PLURAL.toLowerCase()} para eso`);
+  };
+
   const resetAllData = () => {
     cancelAllNotifications();
     setState(defaultState());
@@ -658,7 +708,10 @@ export default function App(){
     <React.Fragment>
       <header className="app-header">
         <h1>🌴 Study Zoo</h1>
-        <div className="streak-pill">🔥 <b>{state.stats.streak}</b> días</div>
+        <div className="header-pills">
+          <div className="coin-pill">{COIN_EMOJI} <b>{state.coins}</b></div>
+          <div className="streak-pill">🔥 <b>{state.stats.streak}</b> días</div>
+        </div>
       </header>
 
       <main>
@@ -678,6 +731,9 @@ export default function App(){
             state={state}
             onSelect={(animal) => setSelectedAnimalId(animal.id)}
           />
+        )}
+        {tab === 'shop' && (
+          <ShopScreen state={state} onBuyFoodBundle={buyFoodBundle} />
         )}
         {tab === 'stats' && (
           <StatsScreen state={state} />
@@ -705,6 +761,9 @@ export default function App(){
         </button>
         <button className={tab==='zoo'?'active':''} onClick={()=>setTab('zoo')}>
           <span className="ic">🦁</span> Zoológico
+        </button>
+        <button className={tab==='shop'?'active':''} onClick={()=>setTab('shop')}>
+          <span className="ic">🛒</span> Tienda
         </button>
         <button className={tab==='stats'?'active':''} onClick={()=>setTab('stats')}>
           <span className="ic">📊</span> Estadísticas
@@ -1017,6 +1076,58 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
           )}
         </div>
       ))}
+    </React.Fragment>
+  );
+}
+
+/* ============ SHOP SCREEN ============ */
+
+function ShopScreen({ state, onBuyFoodBundle }){
+  return (
+    <React.Fragment>
+      <div className="zoo-header">
+        <div className="zoo-count">Tu saldo: {COIN_EMOJI} {state.coins} {COIN_NAME_PLURAL}</div>
+      </div>
+      <div style={{fontSize:'0.78rem', color:'var(--text-dim)', marginBottom:16}}>
+        Ganás {COINS_PER_STUDY_MINUTE} {COIN_NAME.toLowerCase()}{COINS_PER_STUDY_MINUTE===1?'':'s'} por cada minuto de estudio completado.
+      </div>
+
+      <div className="config-section" style={{marginTop:0}}>
+        <h3>🌾 Fardos de comida</h3>
+        <div className="shop-grid">
+          {SHOP_FOOD_BUNDLES.map(bundle => {
+            const canAfford = state.coins >= bundle.price;
+            return (
+              <div key={bundle.id} className="shop-card">
+                <div className="shop-card-emoji">{bundle.emoji}</div>
+                <div className="shop-card-label">{bundle.label}</div>
+                <div className="shop-card-detail">+{bundle.foodAmount} comida</div>
+                <button
+                  className="btn primary small"
+                  disabled={!canAfford}
+                  onClick={() => onBuyFoodBundle(bundle.id)}
+                >
+                  {COIN_EMOJI} {bundle.price}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>🐘 Animales</h3>
+        <div style={{fontSize:'0.8rem', color:'var(--text-dim)'}}>
+          Próximamente: comprá los animales que ya desbloqueaste estudiando.
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>🌳 Decoraciones</h3>
+        <div style={{fontSize:'0.8rem', color:'var(--text-dim)'}}>
+          Próximamente: decorá tu zoológico jugable.
+        </div>
+      </div>
     </React.Fragment>
   );
 }
