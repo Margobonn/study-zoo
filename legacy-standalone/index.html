@@ -1,0 +1,1182 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Study Zoo — Pomodoro Gamificado</title>
+<style>
+  :root{
+    --bg: #0f1720;
+    --bg-alt: #16212c;
+    --card: #1c2a37;
+    --card-alt: #23333f;
+    --text: #eef4f9;
+    --text-dim: #9fb3c4;
+    --primary: #ff8a5c;
+    --primary-dark: #e56f42;
+    --accent: #5cc8ff;
+    --accent-2: #7be0a0;
+    --danger: #ff6b6b;
+    --border: #2a3b48;
+    --common: #9ca3af;
+    --uncommon: #4ade80;
+    --rare: #38bdf8;
+    --epic: #c084fc;
+    --legendary: #fbbf24;
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: radial-gradient(1200px 800px at 50% -10%, #1e2f3d 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  #root{ max-width: 560px; margin: 0 auto; min-height: 100vh; display:flex; flex-direction:column; position:relative; }
+
+  .app-header{
+    padding: 18px 18px 10px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .app-header h1{ font-size: 1.15rem; margin:0; display:flex; align-items:center; gap:8px; }
+  .streak-pill{
+    display:flex; align-items:center; gap:6px;
+    background: var(--card); border:1px solid var(--border);
+    padding: 6px 10px; border-radius: 999px; font-size: 0.85rem; color: var(--text-dim);
+  }
+  .streak-pill b{ color: var(--accent-2); }
+
+  main{ flex:1; padding: 4px 16px 90px; overflow-y:auto; }
+
+  /* ---- Timer screen ---- */
+  .phase-toggle{
+    display:flex; justify-content:center; gap:8px; margin: 6px 0 22px;
+  }
+  .phase-chip{
+    padding: 6px 16px; border-radius: 999px; font-size: 0.8rem; font-weight:600;
+    background: var(--card); color: var(--text-dim); border: 1px solid var(--border);
+  }
+  .phase-chip.active.study{ background: rgba(255,138,92,0.15); color: var(--primary); border-color: var(--primary); }
+  .phase-chip.active.break{ background: rgba(92,200,255,0.15); color: var(--accent); border-color: var(--accent); }
+
+  .timer-ring-wrap{ display:flex; justify-content:center; margin: 10px 0 8px; }
+  .timer-ring{ position:relative; width: 260px; height:260px; }
+  .timer-ring svg{ transform: rotate(-90deg); }
+  .timer-ring .bg{ fill:none; stroke: var(--card); stroke-width: 14; }
+  .timer-ring .fg{ fill:none; stroke-width: 14; stroke-linecap: round; transition: stroke-dashoffset 0.3s linear; }
+  .timer-ring .fg.study{ stroke: var(--primary); }
+  .timer-ring .fg.break{ stroke: var(--accent); }
+  .timer-center{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .timer-time{ font-size: 3rem; font-weight:700; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
+  .timer-sub{ color: var(--text-dim); font-size: 0.9rem; margin-top:4px; }
+
+  .timer-controls{ display:flex; justify-content:center; gap:10px; margin: 20px 0 8px; flex-wrap:wrap; }
+  .btn{
+    border:none; border-radius: var(--radius-sm); padding: 12px 18px; font-size: 0.95rem; font-weight:600;
+    cursor:pointer; color: var(--text); background: var(--card); border: 1px solid var(--border);
+    transition: transform .08s ease, background .15s ease;
+  }
+  .btn:active{ transform: scale(0.96); }
+  .btn.primary{ background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color:#1a1206; border:none; }
+  .btn.ghost{ background: transparent; }
+  .btn.small{ padding: 8px 12px; font-size: 0.8rem; }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  .btn.block{ width:100%; }
+
+  .extend-row{ display:flex; justify-content:center; margin-top: 14px; }
+
+  .stats-row{ display:flex; gap:10px; margin-top: 24px; }
+  .stat-card{
+    flex:1; background: var(--card); border:1px solid var(--border); border-radius: var(--radius);
+    padding: 14px; text-align:center;
+  }
+  .stat-card .val{ font-size:1.4rem; font-weight:700; color: var(--accent-2); }
+  .stat-card .lbl{ font-size:0.75rem; color: var(--text-dim); margin-top:2px; }
+
+  .food-banner{
+    margin-top: 18px; display:flex; align-items:center; justify-content:space-between;
+    background: var(--card-alt); border:1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px;
+  }
+  .food-banner .left{ display:flex; align-items:center; gap:10px; }
+  .food-banner .emoji{ font-size:1.6rem; }
+
+  /* ---- Nav ---- */
+  nav.bottom-nav{
+    position: sticky; bottom:0; left:0; right:0;
+    display:flex; background: rgba(22,33,44,0.95); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+    padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
+  }
+  nav.bottom-nav button{
+    flex:1; background:none; border:none; color: var(--text-dim); display:flex; flex-direction:column;
+    align-items:center; gap:2px; font-size: 0.7rem; padding: 6px 2px; border-radius: 10px; cursor:pointer;
+  }
+  nav.bottom-nav button .ic{ font-size: 1.3rem; }
+  nav.bottom-nav button.active{ color: var(--primary); background: rgba(255,138,92,0.1); }
+
+  /* ---- Zoo screen ---- */
+  .zoo-header{ display:flex; align-items:center; justify-content:space-between; margin: 10px 0 14px; }
+  .zoo-count{ font-size:0.85rem; color: var(--text-dim); }
+  .species-search{
+    width:100%; background: var(--card); border:1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 12px; color: var(--text); font-size:0.9rem; margin-bottom: 10px;
+  }
+  .species-search::placeholder{ color: var(--text-dim); }
+  .filters{ display:flex; gap:8px; overflow-x:auto; padding-bottom:8px; margin-bottom: 10px; }
+  .filter-chip{
+    white-space:nowrap; padding:6px 12px; border-radius:999px; font-size:0.78rem; font-weight:600;
+    background: var(--card); border:1px solid var(--border); color: var(--text-dim); cursor:pointer;
+  }
+  .filter-chip.active{ background: rgba(92,200,255,0.15); color: var(--accent); border-color: var(--accent); }
+
+  .animal-grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; }
+  .animal-card{
+    background: var(--card); border:1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px 6px 8px; text-align:center; cursor:pointer; position:relative;
+  }
+  .animal-card .emoji{ font-size: 2rem; display:block; }
+  .animal-card .nm{ font-size: 0.72rem; margin-top:4px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .animal-card .rarity-dot{
+    position:absolute; top:6px; right:6px; width:8px; height:8px; border-radius:50%;
+  }
+  .animal-card .hunger-bar{ height:4px; border-radius:2px; background: var(--border); margin-top:6px; overflow:hidden; }
+  .animal-card .hunger-fill{ height:100%; }
+
+  .empty-state{ text-align:center; color: var(--text-dim); padding: 40px 20px; }
+  .empty-state .big{ font-size: 3rem; margin-bottom: 10px; }
+
+  .animal-card.locked{ opacity:0.45; cursor:default; }
+  .animal-card .dim{ filter: grayscale(1); }
+
+  .habitat-section{ margin-bottom: 26px; }
+  .habitat-title{
+    display:flex; align-items:center; justify-content:space-between;
+    font-weight:700; font-size:0.95rem; margin-bottom: 10px;
+  }
+  .habitat-count{ font-size:0.75rem; color: var(--text-dim); font-weight:600; }
+  .habitat-empty{ color: var(--text-dim); font-size:0.8rem; padding: 10px 2px; }
+
+  /* ---- Modal ---- */
+  .modal-overlay{
+    position: fixed; inset:0; background: rgba(5,10,15,0.72); display:flex; align-items:center; justify-content:center;
+    z-index: 50; padding: 20px; backdrop-filter: blur(2px);
+  }
+  .modal-card{
+    background: var(--bg-alt); border:1px solid var(--border); border-radius: var(--radius);
+    padding: 24px 20px; max-width: 380px; width:100%; text-align:center; max-height:88vh; overflow-y:auto;
+  }
+  .modal-card .big-emoji{ font-size: 4.5rem; margin: 6px 0; animation: pop .5s ease; }
+  @keyframes pop{ 0%{ transform: scale(0.3); opacity:0; } 60%{ transform: scale(1.15); } 100%{ transform: scale(1); opacity:1; } }
+  .rarity-badge{
+    display:inline-block; padding: 4px 12px; border-radius:999px; font-size:0.75rem; font-weight:700;
+    margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .modal-actions{ display:flex; gap:8px; margin-top: 18px; }
+
+  /* ---- Config ---- */
+  .config-section{ margin-top: 14px; }
+  .config-section h3{ font-size: 0.85rem; color: var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; }
+  .preset-grid{ display:grid; grid-template-columns: repeat(2,1fr); gap:10px; }
+  .preset-btn{
+    background: var(--card); border:1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 14px; text-align:center; cursor:pointer; color:var(--text);
+  }
+  .preset-btn.active{ border-color: var(--primary); background: rgba(255,138,92,0.1); color: var(--primary); }
+  .preset-btn .big{ font-weight:700; font-size:1.1rem; }
+  .preset-btn .small{ font-size:0.72rem; color: var(--text-dim); margin-top:2px; }
+  .custom-row{ display:flex; gap:10px; margin-top: 10px; }
+  .field{ flex:1; }
+  .field label{ display:block; font-size:0.75rem; color: var(--text-dim); margin-bottom:6px; }
+  .field input{
+    width:100%; background: var(--card); border:1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 10px; color: var(--text); font-size:1rem;
+  }
+  .danger-zone{ margin-top: 30px; border-top:1px dashed var(--border); padding-top:18px; }
+
+  /* ---- Stats chart ---- */
+  .chart-scroll{ overflow-x:auto; }
+  .chart{ display:flex; align-items:flex-end; gap:6px; height:150px; padding-bottom:4px; }
+  .chart-col{ display:flex; flex-direction:column; align-items:center; flex:1; min-width:16px; height:100%; }
+  .chart-bar-track{ flex:1; width:100%; display:flex; align-items:flex-end; }
+  .chart-bar{ width:100%; background: var(--accent); border-radius:4px 4px 0 0; transition: height .3s ease; min-height:4px; }
+  .chart-bar.today{ background: var(--primary); }
+  .chart-lbl{ font-size:0.65rem; color: var(--text-dim); margin-top:6px; text-transform:capitalize; }
+
+  .toast{
+    position: fixed; top: 14px; left:50%; transform: translateX(-50%);
+    background: var(--card-alt); border:1px solid var(--border); padding: 10px 18px; border-radius: 999px;
+    font-size: 0.85rem; z-index: 60; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+
+  ::-webkit-scrollbar{ width:6px; height:6px; }
+  ::-webkit-scrollbar-thumb{ background: var(--border); border-radius:4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/plain" id="app-source">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* ============ DATA ============ */
+
+const SPECIES = [
+  // comunes (60%)
+  { id:'rabbit', name:'Conejo', emoji:'🐰', rarity:'common', habitat:'bosque' },
+  { id:'squirrel', name:'Ardilla', emoji:'🐿️', rarity:'common', habitat:'bosque' },
+  { id:'chicken', name:'Gallina', emoji:'🐔', rarity:'common', habitat:'granja' },
+  { id:'pig', name:'Cerdo', emoji:'🐷', rarity:'common', habitat:'granja' },
+  { id:'sheep', name:'Oveja', emoji:'🐑', rarity:'common', habitat:'granja' },
+  { id:'duck', name:'Pato', emoji:'🦆', rarity:'common', habitat:'granja' },
+  { id:'cat', name:'Gato', emoji:'🐱', rarity:'common', habitat:'granja' },
+  { id:'frog', name:'Rana', emoji:'🐸', rarity:'common', habitat:'selva' },
+  { id:'turtle', name:'Tortuga', emoji:'🐢', rarity:'common', habitat:'oceano' },
+  { id:'mouse', name:'Ratón', emoji:'🐭', rarity:'common', habitat:'bosque' },
+  // poco comunes (25%)
+  { id:'fox', name:'Zorro', emoji:'🦊', rarity:'uncommon', habitat:'bosque' },
+  { id:'raccoon', name:'Mapache', emoji:'🦝', rarity:'uncommon', habitat:'bosque' },
+  { id:'owl', name:'Búho', emoji:'🦉', rarity:'uncommon', habitat:'bosque' },
+  { id:'zebra', name:'Cebra', emoji:'🦓', rarity:'uncommon', habitat:'sabana' },
+  { id:'giraffe', name:'Jirafa', emoji:'🦒', rarity:'uncommon', habitat:'sabana' },
+  { id:'pelican', name:'Pelícano', emoji:'🦤', rarity:'uncommon', habitat:'oceano' },
+  { id:'koala', name:'Koala', emoji:'🐨', rarity:'uncommon', habitat:'selva' },
+  { id:'otter', name:'Nutria', emoji:'🦦', rarity:'uncommon', habitat:'oceano' },
+  // raros (10%)
+  { id:'lion', name:'León', emoji:'🦁', rarity:'rare', habitat:'sabana' },
+  { id:'tiger', name:'Tigre', emoji:'🐯', rarity:'rare', habitat:'selva' },
+  { id:'polarbear', name:'Oso Polar', emoji:'🐻‍❄️', rarity:'rare', habitat:'polar' },
+  { id:'penguin', name:'Pingüino', emoji:'🐧', rarity:'rare', habitat:'polar' },
+  { id:'dolphin', name:'Delfín', emoji:'🐬', rarity:'rare', habitat:'oceano' },
+  { id:'wolf', name:'Lobo', emoji:'🐺', rarity:'rare', habitat:'bosque' },
+  // épicos (4%)
+  { id:'elephant', name:'Elefante', emoji:'🐘', rarity:'epic', habitat:'sabana' },
+  { id:'redpanda', name:'Panda Rojo', emoji:'🐼', rarity:'epic', habitat:'selva' },
+  { id:'eagle', name:'Águila Real', emoji:'🦅', rarity:'epic', habitat:'polar' },
+  // legendarios (1%)
+  { id:'dragon', name:'Dragón', emoji:'🐉', rarity:'legendary', habitat:'fantasia' },
+  { id:'unicorn', name:'Unicornio', emoji:'🦄', rarity:'legendary', habitat:'fantasia' },
+];
+
+const HABITATS = [
+  { id:'bosque',   label:'Bosque',   emoji:'🌲' },
+  { id:'granja',   label:'Granja',   emoji:'🚜' },
+  { id:'selva',    label:'Selva',    emoji:'🌴' },
+  { id:'sabana',   label:'Sabana',   emoji:'🌾' },
+  { id:'oceano',   label:'Océano',   emoji:'🌊' },
+  { id:'polar',    label:'Polar',    emoji:'❄️' },
+  { id:'fantasia', label:'Fantasía', emoji:'✨' },
+];
+
+const RARITY_META = {
+  common:    { label:'Común',      color:'var(--common)',    chance:60 },
+  uncommon:  { label:'Poco común', color:'var(--uncommon)',  chance:25 },
+  rare:      { label:'Raro',       color:'var(--rare)',      chance:10 },
+  epic:      { label:'Épico',      color:'var(--epic)',      chance:4  },
+  legendary: { label:'Legendario', color:'var(--legendary)', chance:1  },
+};
+
+const PET_NAMES = [
+  'Luna','Rocky','Nube','Coco','Mango','Kiwi','Simba','Nala','Toby','Bella',
+  'Milo','Olivia','Rex','Maya','Pepe','Lola','Bruno','Nina','Max','Sasha',
+  'Leo','Frida','Chispa','Canela','Trufa','Pipo','Nube','Estrella','Sol','Bongo'
+];
+
+const FOOD_PER_5MIN = 1;
+
+/* ============ STORAGE ============ */
+
+const STORAGE_KEY = 'study-zoo-state-v1';
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    const base = defaultState();
+    return {
+      ...base,
+      ...parsed,
+      config: { ...base.config, ...(parsed.config||{}) },
+      timer: { ...base.timer, ...(parsed.timer||{}) },
+      stats: { ...base.stats, ...(parsed.stats||{}) },
+      sessionLog: parsed.sessionLog || [],
+    };
+  }catch(e){ return null; }
+}
+
+function defaultState(){
+  return {
+    config: { studyMin: 25, breakMin: 5 },
+    timer: { phase: 'study', status: 'idle', endTime: null, remainingMs: 25*60*1000, extraMs: 0 },
+    stats: {
+      sessionsToday: 0, lastSessionDateKey: null, streak: 0,
+      totalStudyMinutes: 0, totalSessions: 0,
+      totalFoodEarned: 0, totalFoodUsed: 0,
+    },
+    food: 0,
+    animals: [],
+    lastSpeciesId: null,
+    sessionLog: [], // { ts, dateKey, minutes }
+  };
+}
+
+/* ============ HELPERS ============ */
+
+function dateKey(d = new Date()){
+  return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate();
+}
+
+function daysBetween(key1, key2){
+  if(!key1 || !key2) return Infinity;
+  const [y1,m1,d1] = key1.split('-').map(Number);
+  const [y2,m2,d2] = key2.split('-').map(Number);
+  const t1 = Date.UTC(y1,m1-1,d1);
+  const t2 = Date.UTC(y2,m2-1,d2);
+  return Math.round((t2 - t1) / 86400000);
+}
+
+function fmtTime(ms){
+  const totalSec = Math.max(0, Math.ceil(ms/1000));
+  const m = Math.floor(totalSec/60);
+  const s = totalSec%60;
+  return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function pickRandomSpecies(lastSpeciesId){
+  const roll = Math.random()*100;
+  let rarity;
+  if(roll < 60) rarity='common';
+  else if(roll < 85) rarity='uncommon';
+  else if(roll < 95) rarity='rare';
+  else if(roll < 99) rarity='epic';
+  else rarity='legendary';
+
+  const pool = SPECIES.filter(s=>s.rarity===rarity);
+  let candidates = pool.filter(s=>s.id !== lastSpeciesId);
+  if(candidates.length===0) candidates = pool;
+  return candidates[Math.floor(Math.random()*candidates.length)];
+}
+
+function makeAnimalInstance(species){
+  const now = Date.now();
+  return {
+    id: 'a_' + now + '_' + Math.floor(Math.random()*100000),
+    speciesId: species.id,
+    name: PET_NAMES[Math.floor(Math.random()*PET_NAMES.length)],
+    obtainedAt: now,
+    lastFed: now,
+  };
+}
+
+function computeHunger(animal){
+  const hoursSince = (Date.now() - animal.lastFed) / 3600000;
+  const hunger = 100 - (hoursSince / 24) * 20; // -20 puntos cada 24h
+  return Math.max(0, Math.min(100, Math.round(hunger)));
+}
+
+function hungerState(hunger){
+  if(hunger >= 70) return { label:'Feliz', emoji:'😄', color:'var(--accent-2)' };
+  if(hunger >= 35) return { label:'Normal', emoji:'🙂', color:'var(--accent)' };
+  return { label:'Triste', emoji:'🥺', color:'var(--text-dim)' };
+}
+
+/* ============ APP ============ */
+
+function App(){
+  const [state, setState] = useState(() => loadState() || defaultState());
+  const [tab, setTab] = useState('timer');
+  const [newAnimalModal, setNewAnimalModal] = useState(null);
+  const [selectedAnimal, setSelectedAnimal] = useState(null);
+  const [toast, setToast] = useState(null);
+  const audioCtxRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }, [state]);
+
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  const playBeep = useCallback(() => {
+    try{
+      if(!audioCtxRef.current){
+        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); o.stop(ctx.currentTime + 0.55);
+    }catch(e){ /* audio not available */ }
+  }, []);
+
+  const awardAnimal = useCallback(() => {
+    setState(prev => {
+      const species = pickRandomSpecies(prev.lastSpeciesId);
+      const instance = makeAnimalInstance(species);
+      setNewAnimalModal({ species, instance });
+      return {
+        ...prev,
+        animals: [...prev.animals, instance],
+        lastSpeciesId: species.id,
+      };
+    });
+  }, []);
+
+  const registerCompletedSession = useCallback((extraMinutes) => {
+    setState(prev => {
+      const todayKey = dateKey();
+      const minutes = prev.config.studyMin + extraMinutes;
+      let streak = prev.stats.streak;
+      let sessionsToday = prev.stats.sessionsToday;
+      if(prev.stats.lastSessionDateKey === todayKey){
+        sessionsToday += 1;
+      } else {
+        const diff = daysBetween(prev.stats.lastSessionDateKey, todayKey);
+        streak = (diff === 1) ? streak + 1 : 1;
+        sessionsToday = 1;
+      }
+      return {
+        ...prev,
+        stats: {
+          ...prev.stats,
+          sessionsToday,
+          streak,
+          lastSessionDateKey: todayKey,
+          totalStudyMinutes: prev.stats.totalStudyMinutes + minutes,
+          totalSessions: prev.stats.totalSessions + 1,
+        },
+        sessionLog: [...prev.sessionLog, { ts: Date.now(), dateKey: todayKey, minutes }],
+      };
+    });
+  }, []);
+
+  /* ---- Timer tick ---- */
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if(state.timer.status !== 'running') return;
+    const id = setInterval(() => forceTick(t => t+1), 250);
+    return () => clearInterval(id);
+  }, [state.timer.status]);
+
+  const phaseDurationMs = (phase, cfg, extraMs) => {
+    const base = (phase === 'study' ? cfg.studyMin : cfg.breakMin) * 60000;
+    return base + (extraMs || 0);
+  };
+
+  // Intentionally not memoized: must recompute every tick (every 250ms while
+  // running) against Date.now(), even though state.timer itself doesn't change.
+  const computeRemainingMs = () => {
+    const t = state.timer;
+    if(t.status === 'running' && t.endTime){
+      return t.endTime - Date.now();
+    }
+    return t.remainingMs;
+  };
+  const remainingMs = computeRemainingMs();
+
+  // handle natural completion
+  useEffect(() => {
+    if(state.timer.status === 'running' && remainingMs <= 0){
+      const finishedPhase = state.timer.phase;
+      const extraMinutes = Math.round((state.timer.extraMs || 0) / 60000);
+      playBeep();
+      if(finishedPhase === 'study'){
+        registerCompletedSession(extraMinutes);
+        awardAnimal();
+        showToast('¡Sesión de estudio completada!');
+      } else {
+        showToast('Descanso terminado. ¡A seguir!');
+      }
+      const nextPhase = finishedPhase === 'study' ? 'break' : 'study';
+      setState(prev => ({
+        ...prev,
+        timer: {
+          phase: nextPhase,
+          status: 'idle',
+          endTime: null,
+          remainingMs: phaseDurationMs(nextPhase, prev.config, 0),
+          extraMs: 0,
+        },
+      }));
+    }
+  }, [remainingMs, state.timer.status]);
+
+  /* ---- Timer controls ---- */
+  const startTimer = () => {
+    setState(prev => ({
+      ...prev,
+      timer: { ...prev.timer, status:'running', endTime: Date.now() + prev.timer.remainingMs },
+    }));
+  };
+  const pauseTimer = () => {
+    setState(prev => {
+      if(prev.timer.status !== 'running') return prev;
+      const rem = prev.timer.endTime - Date.now();
+      return { ...prev, timer: { ...prev.timer, status:'paused', remainingMs: Math.max(0,rem), endTime: null } };
+    });
+  };
+  const resetPhase = () => {
+    setState(prev => ({
+      ...prev,
+      timer: {
+        phase: prev.timer.phase,
+        status: 'idle',
+        endTime: null,
+        remainingMs: phaseDurationMs(prev.timer.phase, prev.config, 0),
+        extraMs: 0,
+      },
+    }));
+  };
+  const skipPhase = () => {
+    setState(prev => {
+      const next = prev.timer.phase === 'study' ? 'break' : 'study';
+      return {
+        ...prev,
+        timer: { phase: next, status:'idle', endTime:null, remainingMs: phaseDurationMs(next, prev.config, 0), extraMs: 0 },
+      };
+    });
+  };
+  const extendSession = (minutes) => {
+    setState(prev => {
+      if(prev.timer.phase !== 'study') return prev;
+      const addMs = minutes * 60000;
+      const foodGain = Math.floor(minutes / 5) * FOOD_PER_5MIN;
+      const t = prev.timer;
+      let newTimer;
+      if(t.status === 'running' && t.endTime){
+        newTimer = { ...t, endTime: t.endTime + addMs, extraMs: (t.extraMs||0) + addMs };
+      } else {
+        newTimer = { ...t, remainingMs: t.remainingMs + addMs, extraMs: (t.extraMs||0) + addMs };
+      }
+      return {
+        ...prev,
+        timer: newTimer,
+        food: prev.food + foodGain,
+        stats: { ...prev.stats, totalFoodEarned: prev.stats.totalFoodEarned + foodGain },
+      };
+    });
+    if(Math.floor(minutes/5) > 0) showToast('+' + Math.floor(minutes/5) + ' 🍖 comida por estudiar extra');
+  };
+
+  const updateConfig = (studyMin, breakMin) => {
+    setState(prev => {
+      const timerIsDefault = prev.timer.status === 'idle';
+      return {
+        ...prev,
+        config: { studyMin, breakMin },
+        timer: timerIsDefault
+          ? { ...prev.timer, remainingMs: phaseDurationMs(prev.timer.phase, {studyMin, breakMin}, 0), extraMs:0 }
+          : prev.timer,
+      };
+    });
+  };
+
+  const feedAnimal = (animalId) => {
+    setState(prev => {
+      if(prev.food <= 0) return prev;
+      return {
+        ...prev,
+        food: prev.food - 1,
+        animals: prev.animals.map(a => a.id === animalId ? { ...a, lastFed: Date.now() } : a),
+        stats: { ...prev.stats, totalFoodUsed: prev.stats.totalFoodUsed + 1 },
+      };
+    });
+    showToast('¡Animal alimentado! 🍖');
+  };
+
+  const resetAllData = () => {
+    setState(defaultState());
+    showToast('Datos reiniciados');
+  };
+
+  return (
+    <React.Fragment>
+      <header className="app-header">
+        <h1>🌴 Study Zoo</h1>
+        <div className="streak-pill">🔥 <b>{state.stats.streak}</b> días</div>
+      </header>
+
+      <main>
+        {tab === 'timer' && (
+          <TimerScreen
+            state={state}
+            remainingMs={Math.max(0, remainingMs)}
+            onStart={startTimer}
+            onPause={pauseTimer}
+            onReset={resetPhase}
+            onSkip={skipPhase}
+            onExtend={extendSession}
+          />
+        )}
+        {tab === 'zoo' && (
+          <ZooScreen
+            state={state}
+            onSelect={setSelectedAnimal}
+          />
+        )}
+        {tab === 'stats' && (
+          <StatsScreen state={state} />
+        )}
+        {tab === 'config' && (
+          <ConfigScreen
+            state={state}
+            onUpdateConfig={updateConfig}
+            onResetAll={resetAllData}
+          />
+        )}
+      </main>
+
+      <nav className="bottom-nav">
+        <button className={tab==='timer'?'active':''} onClick={()=>setTab('timer')}>
+          <span className="ic">⏱️</span> Temporizador
+        </button>
+        <button className={tab==='zoo'?'active':''} onClick={()=>setTab('zoo')}>
+          <span className="ic">🦁</span> Zoológico
+        </button>
+        <button className={tab==='stats'?'active':''} onClick={()=>setTab('stats')}>
+          <span className="ic">📊</span> Estadísticas
+        </button>
+        <button className={tab==='config'?'active':''} onClick={()=>setTab('config')}>
+          <span className="ic">⚙️</span> Config
+        </button>
+      </nav>
+
+      {newAnimalModal && (
+        <NewAnimalModal data={newAnimalModal} onClose={() => setNewAnimalModal(null)} />
+      )}
+      {selectedAnimal && (
+        <AnimalDetailModal
+          animal={selectedAnimal}
+          food={state.food}
+          onFeed={feedAnimal}
+          onClose={() => setSelectedAnimal(null)}
+        />
+      )}
+      {toast && <div className="toast">{toast}</div>}
+    </React.Fragment>
+  );
+}
+
+/* ============ TIMER SCREEN ============ */
+
+function TimerScreen({ state, remainingMs, onStart, onPause, onReset, onSkip, onExtend }){
+  const { timer, config, stats, food } = state;
+  const totalMs = (timer.phase === 'study' ? config.studyMin : config.breakMin) * 60000 + (timer.extraMs||0);
+  const progress = totalMs > 0 ? 1 - (remainingMs / totalMs) : 0;
+  const radius = 116;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - Math.min(1, Math.max(0, progress)));
+
+  return (
+    <React.Fragment>
+      <div className="phase-toggle">
+        <span className={'phase-chip study ' + (timer.phase==='study' ? 'active study' : '')}>📚 Estudio</span>
+        <span className={'phase-chip break ' + (timer.phase==='break' ? 'active break' : '')}>☕ Descanso</span>
+      </div>
+
+      <div className="timer-ring-wrap">
+        <div className="timer-ring">
+          <svg width="260" height="260">
+            <circle className="bg" cx="130" cy="130" r={radius}/>
+            <circle
+              className={'fg ' + timer.phase}
+              cx="130" cy="130" r={radius}
+              strokeDasharray={circumference}
+              strokeDashoffset={dashOffset}
+            />
+          </svg>
+          <div className="timer-center">
+            <div className="timer-time">{fmtTime(remainingMs)}</div>
+            <div className="timer-sub">
+              {timer.status === 'running' ? (timer.phase==='study' ? 'Enfocándote…' : 'Descansando…') :
+               timer.status === 'paused' ? 'Pausado' : (timer.phase === 'study' ? 'Listo para estudiar' : 'Listo para descansar')}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="timer-controls">
+        {timer.status !== 'running' ? (
+          <button className="btn primary" onClick={onStart}>▶ Iniciar</button>
+        ) : (
+          <button className="btn primary" onClick={onPause}>⏸ Pausar</button>
+        )}
+        <button className="btn" onClick={onReset}>↺ Reiniciar</button>
+        <button className="btn ghost" onClick={onSkip}>⏭ Saltar fase</button>
+      </div>
+
+      {timer.phase === 'study' && (
+        <div className="extend-row">
+          <button className="btn small" onClick={() => onExtend(5)}>+5 min extra (🍖 comida)</button>
+        </div>
+      )}
+
+      <div className="stats-row">
+        <div className="stat-card">
+          <div className="val">{stats.sessionsToday}</div>
+          <div className="lbl">Sesiones hoy</div>
+        </div>
+        <div className="stat-card">
+          <div className="val">{stats.streak}</div>
+          <div className="lbl">Racha (días)</div>
+        </div>
+        <div className="stat-card">
+          <div className="val">{stats.totalSessions}</div>
+          <div className="lbl">Total sesiones</div>
+        </div>
+      </div>
+
+      <div className="food-banner">
+        <div className="left">
+          <span className="emoji">🍖</span>
+          <div>
+            <div style={{fontWeight:700}}>{food} comida disponible</div>
+            <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>Estudia tiempo extra para conseguir más</div>
+          </div>
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+/* ============ ZOO SCREEN ============ */
+
+function AnimalCard({ animal, species, onSelect }){
+  const hunger = computeHunger(animal);
+  return (
+    <div className="animal-card" onClick={() => onSelect(animal)}>
+      <span className="rarity-dot" style={{background: RARITY_META[species.rarity].color}}></span>
+      <span className="emoji">{species.emoji}</span>
+      <div className="nm">{animal.name}</div>
+      <div className="hunger-bar">
+        <div className="hunger-fill" style={{width: hunger+'%', background: hungerState(hunger).color}}></div>
+      </div>
+    </div>
+  );
+}
+
+function LockedCard({ species }){
+  return (
+    <div className="animal-card locked" title="Todavía no descubierto">
+      <span className="rarity-dot dim" style={{background: RARITY_META[species.rarity].color}}></span>
+      <span className="emoji dim">❔</span>
+      <div className="nm">???</div>
+    </div>
+  );
+}
+
+function ZooScreen({ state, onSelect }){
+  const [rarityFilter, setRarityFilter] = useState('all');
+  const [stateFilter, setStateFilter] = useState('all');
+  const [speciesQuery, setSpeciesQuery] = useState('');
+  const [viewMode, setViewMode] = useState('grid');
+
+  const uniqueSpeciesCount = useMemo(() => {
+    return new Set(state.animals.map(a => a.speciesId)).size;
+  }, [state.animals]);
+
+  const query = speciesQuery.trim().toLowerCase();
+
+  const matchesFilters = useCallback((a) => {
+    const sp = SPECIES.find(s=>s.id===a.speciesId);
+    if(rarityFilter !== 'all' && sp.rarity !== rarityFilter) return false;
+    if(query && !sp.name.toLowerCase().includes(query)) return false;
+    if(stateFilter !== 'all'){
+      const h = computeHunger(a);
+      const st = hungerState(h).label.toLowerCase();
+      if(stateFilter === 'happy' && st !== 'feliz') return false;
+      if(stateFilter === 'sad' && st === 'feliz') return false;
+    }
+    return true;
+  }, [rarityFilter, stateFilter, query]);
+
+  const filtered = useMemo(() => {
+    return state.animals.filter(matchesFilters).sort((a,b) => b.obtainedAt - a.obtainedAt);
+  }, [state.animals, matchesFilters]);
+
+  const filters = (
+    <React.Fragment>
+      <div className="filters">
+        <span className={'filter-chip ' + (viewMode==='grid'?'active':'')} onClick={()=>setViewMode('grid')}>🔲 Grilla</span>
+        <span className={'filter-chip ' + (viewMode==='habitat'?'active':'')} onClick={()=>setViewMode('habitat')}>🗺️ Hábitats</span>
+      </div>
+      <input
+        className="species-search"
+        type="search"
+        placeholder="Buscar por especie (ej. León, Zorro…)"
+        value={speciesQuery}
+        onChange={e => setSpeciesQuery(e.target.value)}
+      />
+      <div className="filters">
+        <span className={'filter-chip ' + (rarityFilter==='all'?'active':'')} onClick={()=>setRarityFilter('all')}>Todas</span>
+        {Object.entries(RARITY_META).map(([key, meta]) => (
+          <span key={key} className={'filter-chip ' + (rarityFilter===key?'active':'')} onClick={()=>setRarityFilter(key)}>{meta.label}</span>
+        ))}
+      </div>
+      <div className="filters">
+        <span className={'filter-chip ' + (stateFilter==='all'?'active':'')} onClick={()=>setStateFilter('all')}>Todos los estados</span>
+        <span className={'filter-chip ' + (stateFilter==='happy'?'active':'')} onClick={()=>setStateFilter('happy')}>😄 Felices</span>
+        <span className={'filter-chip ' + (stateFilter==='sad'?'active':'')} onClick={()=>setStateFilter('sad')}>🥺 Necesitan comida</span>
+      </div>
+    </React.Fragment>
+  );
+
+  return (
+    <React.Fragment>
+      <div className="zoo-header">
+        <div className="zoo-count">{uniqueSpeciesCount} de {SPECIES.length} especies · {state.animals.length} animales</div>
+      </div>
+
+      {filters}
+
+      {state.animals.length === 0 ? (
+        <div className="empty-state">
+          <div className="big">🐣</div>
+          <div>Tu zoológico está vacío todavía.</div>
+          <div>Completa una sesión de estudio para conseguir tu primer animal.</div>
+        </div>
+      ) : viewMode === 'grid' ? (
+        filtered.length === 0 ? (
+          <div className="empty-state">
+            <div className="big">🔍</div>
+            <div>Ningún animal coincide con estos filtros.</div>
+          </div>
+        ) : (
+          <div className="animal-grid">
+            {filtered.map(a => (
+              <AnimalCard key={a.id} animal={a} species={SPECIES.find(s=>s.id===a.speciesId)} onSelect={onSelect} />
+            ))}
+          </div>
+        )
+      ) : (
+        <HabitatView state={state} rarityFilter={rarityFilter} speciesQuery={query} matchesFilters={matchesFilters} onSelect={onSelect} />
+      )}
+    </React.Fragment>
+  );
+}
+
+function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSelect }){
+  const sections = useMemo(() => {
+    return HABITATS.map(hab => {
+      const speciesInHabitat = SPECIES.filter(s =>
+        s.habitat === hab.id &&
+        (rarityFilter==='all' || s.rarity===rarityFilter) &&
+        (!speciesQuery || s.name.toLowerCase().includes(speciesQuery))
+      );
+      if(speciesInHabitat.length === 0) return null;
+
+      let anyOwnedInHabitat = false;
+      const visibleCards = [];
+      speciesInHabitat.forEach(sp => {
+        const allOwnedOfSpecies = state.animals.filter(a => a.speciesId === sp.id);
+        if(allOwnedOfSpecies.length > 0) anyOwnedInHabitat = true;
+        const matching = allOwnedOfSpecies.filter(matchesFilters);
+        if(matching.length > 0){
+          matching.forEach(a => visibleCards.push(<AnimalCard key={a.id} animal={a} species={sp} onSelect={onSelect} />));
+        } else if(allOwnedOfSpecies.length === 0){
+          visibleCards.push(<LockedCard key={sp.id} species={sp} />);
+        }
+      });
+
+      const ownedCount = speciesInHabitat.filter(sp => state.animals.some(a => a.speciesId === sp.id)).length;
+      const emptyMessage = anyOwnedInHabitat
+        ? 'Ningún animal de este hábitat coincide con los filtros.'
+        : 'Ningún animal descubierto aquí todavía.';
+      return { hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage };
+    }).filter(Boolean);
+  }, [state.animals, rarityFilter, matchesFilters]);
+
+  return (
+    <React.Fragment>
+      {sections.map(({ hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage }) => (
+        <div key={hab.id} className="habitat-section">
+          <div className="habitat-title">
+            <span>{hab.emoji} {hab.label}</span>
+            <span className="habitat-count">{ownedCount} de {speciesInHabitat.length}</span>
+          </div>
+          {visibleCards.length > 0 ? (
+            <div className="animal-grid">{visibleCards}</div>
+          ) : (
+            <div className="habitat-empty">{emptyMessage}</div>
+          )}
+        </div>
+      ))}
+    </React.Fragment>
+  );
+}
+
+/* ============ STATS SCREEN ============ */
+
+function StatsScreen({ state }){
+  const [range, setRange] = useState(7);
+
+  const dailyData = useMemo(() => {
+    const days = [];
+    const now = new Date();
+    for(let i = range - 1; i >= 0; i--){
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push({ key: dateKey(d), date: d });
+    }
+    const minutesByKey = {};
+    state.sessionLog.forEach(s => { minutesByKey[s.dateKey] = (minutesByKey[s.dateKey] || 0) + s.minutes; });
+    return days.map(d => ({ ...d, minutes: minutesByKey[d.key] || 0 }));
+  }, [state.sessionLog, range]);
+
+  const maxMinutes = Math.max(1, ...dailyData.map(d => d.minutes));
+  const totalRangeMinutes = dailyData.reduce((sum, d) => sum + d.minutes, 0);
+
+  const sessionsThisWeek = useMemo(() => {
+    const cutoff = Date.now() - 7 * 86400000;
+    return state.sessionLog.filter(s => s.ts >= cutoff).length;
+  }, [state.sessionLog]);
+
+  const totalHours = Math.floor(state.stats.totalStudyMinutes / 60);
+  const totalMins = state.stats.totalStudyMinutes % 60;
+  const todayKey = dateKey();
+
+  const weekdayLabel = (d) => d.toLocaleDateString('es-ES', { weekday: 'short' }).replace('.', '');
+  const dayLabel = (d) => d.getDate();
+
+  return (
+    <React.Fragment>
+      <div className="config-section" style={{marginTop:10}}>
+        <h3>Resumen general</h3>
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="val">{totalHours}h {totalMins}m</div>
+            <div className="lbl">Tiempo total estudiado</div>
+          </div>
+        </div>
+        <div className="stats-row" style={{marginTop:10}}>
+          <div className="stat-card">
+            <div className="val">{state.stats.totalSessions}</div>
+            <div className="lbl">Sesiones totales</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{sessionsThisWeek}</div>
+            <div className="lbl">Últimos 7 días</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{state.stats.streak}</div>
+            <div className="lbl">Racha actual</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Comida</h3>
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="val">{state.stats.totalFoodEarned}</div>
+            <div className="lbl">Ganada</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{state.stats.totalFoodUsed}</div>
+            <div className="lbl">Usada</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{state.food}</div>
+            <div className="lbl">Disponible</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="config-section">
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+          <h3 style={{marginBottom:0}}>Estudio por día</h3>
+          <div style={{display:'flex', gap:6}}>
+            <span className={'filter-chip ' + (range===7?'active':'')} onClick={()=>setRange(7)}>7 días</span>
+            <span className={'filter-chip ' + (range===30?'active':'')} onClick={()=>setRange(30)}>30 días</span>
+          </div>
+        </div>
+        <div style={{fontSize:'0.78rem', color:'var(--text-dim)', margin:'8px 0'}}>
+          {Math.floor(totalRangeMinutes/60)}h {totalRangeMinutes%60}m en los últimos {range} días
+        </div>
+        <div className="chart-scroll">
+          <div className="chart" style={{minWidth: range===30 ? 620 : 'auto'}}>
+            {dailyData.map(d => (
+              <div key={d.key} className="chart-col" title={d.minutes + ' min'}>
+                <div className="chart-bar-track">
+                  <div
+                    className={'chart-bar' + (d.key===todayKey ? ' today' : '')}
+                    style={{height: Math.max(4, (d.minutes/maxMinutes)*100) + '%'}}
+                  ></div>
+                </div>
+                <div className="chart-lbl">{range===7 ? weekdayLabel(d.date) : dayLabel(d.date)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+/* ============ CONFIG SCREEN ============ */
+
+const PRESETS = [
+  { studyMin:25, breakMin:5, label:'Clásico' },
+  { studyMin:50, breakMin:10, label:'Largo' },
+  { studyMin:15, breakMin:3, label:'Corto' },
+];
+
+function ConfigScreen({ state, onUpdateConfig, onResetAll }){
+  const { config } = state;
+  const isPresetActive = (p) => p.studyMin===config.studyMin && p.breakMin===config.breakMin;
+  const isCustomActive = !PRESETS.some(isPresetActive);
+
+  const [customStudy, setCustomStudy] = useState(String(config.studyMin));
+  const [customBreak, setCustomBreak] = useState(String(config.breakMin));
+
+  useEffect(() => { setCustomStudy(String(config.studyMin)); setCustomBreak(String(config.breakMin)); }, [config.studyMin, config.breakMin]);
+
+  const clamp = (raw, min, max, fallback) => {
+    const n = parseInt(raw, 10);
+    if(isNaN(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+
+  const saveCustom = () => {
+    const study = clamp(customStudy, 1, 180, config.studyMin);
+    const brk = clamp(customBreak, 1, 60, config.breakMin);
+    setCustomStudy(String(study));
+    setCustomBreak(String(brk));
+    onUpdateConfig(study, brk);
+  };
+
+  return (
+    <React.Fragment>
+      <div className="config-section">
+        <h3>Duración de sesión</h3>
+        <div className="preset-grid">
+          {PRESETS.map(p => (
+            <div key={p.label} className={'preset-btn ' + (isPresetActive(p)?'active':'')} onClick={() => onUpdateConfig(p.studyMin, p.breakMin)}>
+              <div className="big">{p.studyMin}/{p.breakMin}</div>
+              <div className="small">{p.label}</div>
+            </div>
+          ))}
+          <div className={'preset-btn ' + (isCustomActive?'active':'')} onClick={saveCustom}>
+            <div className="big">Custom</div>
+            <div className="small">Personalizado</div>
+          </div>
+        </div>
+
+        <div className="custom-row">
+          <div className="field">
+            <label>Estudio (min)</label>
+            <input type="number" min="1" max="180" value={customStudy}
+              onChange={e => setCustomStudy(e.target.value)}
+              onBlur={() => setCustomStudy(String(clamp(customStudy, 1, 180, config.studyMin)))} />
+          </div>
+          <div className="field">
+            <label>Descanso (min)</label>
+            <input type="number" min="1" max="60" value={customBreak}
+              onChange={e => setCustomBreak(e.target.value)}
+              onBlur={() => setCustomBreak(String(clamp(customBreak, 1, 60, config.breakMin)))} />
+          </div>
+        </div>
+        <div style={{marginTop:10}}>
+          <button className="btn primary block" onClick={saveCustom}>Guardar personalizado</button>
+        </div>
+      </div>
+
+      <div className="danger-zone">
+        <h3 style={{color:'var(--danger)'}}>Zona de peligro</h3>
+        <button className="btn block" style={{borderColor:'var(--danger)', color:'var(--danger)'}}
+          onClick={() => { if(confirm('¿Borrar todo tu progreso? Esta acción no se puede deshacer.')) onResetAll(); }}>
+          Reiniciar todos los datos
+        </button>
+      </div>
+    </React.Fragment>
+  );
+}
+
+/* ============ MODALS ============ */
+
+function NewAnimalModal({ data, onClose }){
+  const { species, instance } = data;
+  const meta = RARITY_META[species.rarity];
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div style={{color:'var(--text-dim)', fontSize:'0.85rem'}}>¡Nuevo animal desbloqueado!</div>
+        <div className="big-emoji">{species.emoji}</div>
+        <div style={{fontSize:'1.3rem', fontWeight:700}}>{instance.name}</div>
+        <div style={{color:'var(--text-dim)'}}>{species.name}</div>
+        <span className="rarity-badge" style={{background: meta.color + '33', color: meta.color}}>{meta.label}</span>
+        <div className="modal-actions">
+          <button className="btn primary block" onClick={onClose}>¡Genial!</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnimalDetailModal({ animal, food, onFeed, onClose }){
+  const sp = SPECIES.find(s => s.id === animal.speciesId);
+  const meta = RARITY_META[sp.rarity];
+  const hunger = computeHunger(animal);
+  const hs = hungerState(hunger);
+  const obtainedDate = new Date(animal.obtainedAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' });
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="big-emoji">{sp.emoji}</div>
+        <div style={{fontSize:'1.3rem', fontWeight:700}}>{animal.name}</div>
+        <div style={{color:'var(--text-dim)'}}>{sp.name}</div>
+        <span className="rarity-badge" style={{background: meta.color + '33', color: meta.color}}>{meta.label}</span>
+
+        <div style={{marginTop:16, textAlign:'left', fontSize:'0.85rem', color:'var(--text-dim)'}}>
+          <div>Obtenido: {obtainedDate}</div>
+          <div style={{marginTop:8, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <span>Hambre: {hs.emoji} {hs.label}</span>
+            <span>{hunger}%</span>
+          </div>
+          <div className="hunger-bar" style={{marginTop:6}}>
+            <div className="hunger-fill" style={{width: hunger+'%', background: hs.color}}></div>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={onClose}>Cerrar</button>
+          <button className="btn primary" disabled={food<=0} onClick={() => onFeed(animal.id)}>
+            🍖 Alimentar {food<=0 ? '(sin comida)' : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============ MOUNT ============ */
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+<script>
+  var src = document.getElementById('app-source').textContent;
+  var output = Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] }).code;
+  (0, eval)(output);
+</script>
+</body>
+</html>

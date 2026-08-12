@@ -1,0 +1,10 @@
+{
+  "appId": "com.studyzoo.app",
+  "appName": "Study Zoo",
+  "webDir": "dist",
+  "plugins": {
+    "LocalNotifications": {
+      "iconColor": "#ff8a5c"
+    }
+  }
+}

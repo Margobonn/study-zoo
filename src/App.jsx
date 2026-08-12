@@ -1,0 +1,1548 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+import * as storage from './lib/storage.js';
+import {
+  scheduleAllNotifications,
+  cancelAllNotifications,
+  WARNING_POINTS,
+} from './lib/notifications.js';
+import {
+  onAuthChange,
+  registerWithEmail,
+  loginWithEmail,
+  loginWithGoogle,
+  logout as firebaseLogout,
+  deleteAccount as firebaseDeleteAccount,
+  fetchCloudState,
+  saveCloudState,
+  authErrorMessage,
+  googleSignInAvailable,
+} from './lib/firebase.js';
+
+/* ============ DATA ============ */
+
+// tiempoMinimoMinutos = minutos de estudio ACUMULADOS HISTÓRICOS (stats.totalStudyMinutes)
+// necesarios para desbloquear cada especie. Escalonado dentro de cada rareza,
+// ordenado de menor a mayor. Validado con el usuario antes de implementar.
+const SPECIES = [
+  // comunes (20) — 5 a 135 min
+  { id:'rabbit', name:'Conejo', emoji:'🐰', rarity:'common', habitat:'bosque', tiempoMinimoMinutos:5 },
+  { id:'mouse', name:'Ratón', emoji:'🐭', rarity:'common', habitat:'bosque', tiempoMinimoMinutos:10 },
+  { id:'squirrel', name:'Ardilla', emoji:'🐿️', rarity:'common', habitat:'bosque', tiempoMinimoMinutos:15 },
+  { id:'hamster', name:'Hámster', emoji:'🐹', rarity:'common', habitat:'bosque', tiempoMinimoMinutos:20 },
+  { id:'pigeon', name:'Paloma', emoji:'🕊️', rarity:'common', habitat:'bosque', tiempoMinimoMinutos:26 },
+  { id:'chicken', name:'Gallina', emoji:'🐔', rarity:'common', habitat:'granja', tiempoMinimoMinutos:32 },
+  { id:'duck', name:'Pato', emoji:'🦆', rarity:'common', habitat:'granja', tiempoMinimoMinutos:38 },
+  { id:'frog', name:'Rana', emoji:'🐸', rarity:'common', habitat:'selva', tiempoMinimoMinutos:44 },
+  { id:'turtle', name:'Tortuga', emoji:'🐢', rarity:'common', habitat:'oceano', tiempoMinimoMinutos:50 },
+  { id:'cat', name:'Gato', emoji:'🐱', rarity:'common', habitat:'granja', tiempoMinimoMinutos:57 },
+  { id:'goat', name:'Cabra', emoji:'🐐', rarity:'common', habitat:'granja', tiempoMinimoMinutos:64 },
+  { id:'pig', name:'Cerdo', emoji:'🐷', rarity:'common', habitat:'granja', tiempoMinimoMinutos:71 },
+  { id:'sheep', name:'Oveja', emoji:'🐑', rarity:'common', habitat:'granja', tiempoMinimoMinutos:78 },
+  { id:'cow', name:'Vaca', emoji:'🐄', rarity:'common', habitat:'granja', tiempoMinimoMinutos:86 },
+  { id:'horse', name:'Caballo', emoji:'🐴', rarity:'common', habitat:'granja', tiempoMinimoMinutos:94 },
+  { id:'donkey', name:'Burro', emoji:'🫏', rarity:'common', habitat:'granja', tiempoMinimoMinutos:102 },
+  { id:'turkey', name:'Pavo', emoji:'🦃', rarity:'common', habitat:'granja', tiempoMinimoMinutos:110 },
+  { id:'hedgehog', name:'Erizo', emoji:'🦔', rarity:'common', habitat:'bosque', tiempoMinimoMinutos:118 },
+  { id:'crab', name:'Cangrejo', emoji:'🦀', rarity:'common', habitat:'oceano', tiempoMinimoMinutos:126 },
+  { id:'seal', name:'Foca', emoji:'🦭', rarity:'common', habitat:'polar', tiempoMinimoMinutos:135 },
+  // poco comunes (14) — 150 a 550 min
+  { id:'fox', name:'Zorro', emoji:'🦊', rarity:'uncommon', habitat:'bosque', tiempoMinimoMinutos:150 },
+  { id:'raccoon', name:'Mapache', emoji:'🦝', rarity:'uncommon', habitat:'bosque', tiempoMinimoMinutos:175 },
+  { id:'owl', name:'Búho', emoji:'🦉', rarity:'uncommon', habitat:'bosque', tiempoMinimoMinutos:200 },
+  { id:'zebra', name:'Cebra', emoji:'🦓', rarity:'uncommon', habitat:'sabana', tiempoMinimoMinutos:230 },
+  { id:'giraffe', name:'Jirafa', emoji:'🦒', rarity:'uncommon', habitat:'sabana', tiempoMinimoMinutos:260 },
+  { id:'pelican', name:'Pelícano', emoji:'🦤', rarity:'uncommon', habitat:'oceano', tiempoMinimoMinutos:290 },
+  { id:'koala', name:'Koala', emoji:'🐨', rarity:'uncommon', habitat:'selva', tiempoMinimoMinutos:320 },
+  { id:'otter', name:'Nutria', emoji:'🦦', rarity:'uncommon', habitat:'oceano', tiempoMinimoMinutos:350 },
+  { id:'bison', name:'Bisonte', emoji:'🦬', rarity:'uncommon', habitat:'sabana', tiempoMinimoMinutos:385 },
+  { id:'camel', name:'Camello', emoji:'🐫', rarity:'uncommon', habitat:'desierto', tiempoMinimoMinutos:420 },
+  { id:'llama', name:'Llama', emoji:'🦙', rarity:'uncommon', habitat:'montana', tiempoMinimoMinutos:455 },
+  { id:'parrot', name:'Loro', emoji:'🦜', rarity:'uncommon', habitat:'selva', tiempoMinimoMinutos:490 },
+  { id:'flamingo', name:'Flamenco', emoji:'🦩', rarity:'uncommon', habitat:'sabana', tiempoMinimoMinutos:520 },
+  { id:'bat', name:'Murciélago', emoji:'🦇', rarity:'uncommon', habitat:'bosque', tiempoMinimoMinutos:550 },
+  // raros (9) — 600 a 1230 min
+  { id:'lion', name:'León', emoji:'🦁', rarity:'rare', habitat:'sabana', tiempoMinimoMinutos:600 },
+  { id:'wolf', name:'Lobo', emoji:'🐺', rarity:'rare', habitat:'bosque', tiempoMinimoMinutos:675 },
+  { id:'tiger', name:'Tigre', emoji:'🐯', rarity:'rare', habitat:'selva', tiempoMinimoMinutos:750 },
+  { id:'penguin', name:'Pingüino', emoji:'🐧', rarity:'rare', habitat:'polar', tiempoMinimoMinutos:830 },
+  { id:'dolphin', name:'Delfín', emoji:'🐬', rarity:'rare', habitat:'oceano', tiempoMinimoMinutos:910 },
+  { id:'polarbear', name:'Oso Polar', emoji:'🐻‍❄️', rarity:'rare', habitat:'polar', tiempoMinimoMinutos:990 },
+  { id:'jaguar', name:'Jaguar', emoji:'🐆', rarity:'rare', habitat:'selva', tiempoMinimoMinutos:1070 },
+  { id:'orca', name:'Orca', emoji:'🐋', rarity:'rare', habitat:'oceano', tiempoMinimoMinutos:1150 },
+  { id:'chameleon', name:'Camaleón', emoji:'🦎', rarity:'rare', habitat:'selva', tiempoMinimoMinutos:1230 },
+  // épicos (5) — 1350 a 2200 min
+  { id:'elephant', name:'Elefante', emoji:'🐘', rarity:'epic', habitat:'sabana', tiempoMinimoMinutos:1350 },
+  { id:'shark', name:'Tiburón', emoji:'🦈', rarity:'epic', habitat:'oceano', tiempoMinimoMinutos:1550 },
+  { id:'redpanda', name:'Panda Rojo', emoji:'🐼', rarity:'epic', habitat:'selva', tiempoMinimoMinutos:1750 },
+  { id:'eagle', name:'Águila Real', emoji:'🦅', rarity:'epic', habitat:'polar', tiempoMinimoMinutos:1950 },
+  { id:'rhino', name:'Rinoceronte', emoji:'🦏', rarity:'epic', habitat:'sabana', tiempoMinimoMinutos:2200 },
+  // legendarios (2) — 2700 y 3800 min
+  { id:'dragon', name:'Dragón', emoji:'🐉', rarity:'legendary', habitat:'fantasia', tiempoMinimoMinutos:2700 },
+  { id:'unicorn', name:'Unicornio', emoji:'🦄', rarity:'legendary', habitat:'fantasia', tiempoMinimoMinutos:3800 },
+];
+
+const HABITATS = [
+  { id:'bosque',   label:'Bosque',   emoji:'🌲' },
+  { id:'granja',   label:'Granja',   emoji:'🚜' },
+  { id:'selva',    label:'Selva',    emoji:'🌴' },
+  { id:'sabana',   label:'Sabana',   emoji:'🌾' },
+  { id:'oceano',   label:'Océano',   emoji:'🌊' },
+  { id:'polar',    label:'Polar',    emoji:'❄️' },
+  { id:'desierto', label:'Desierto', emoji:'🏜️' },
+  { id:'montana',  label:'Montaña',  emoji:'⛰️' },
+  { id:'fantasia', label:'Fantasía', emoji:'✨' },
+];
+
+const RARITY_META = {
+  common:    { label:'Común',      color:'var(--common)'    },
+  uncommon:  { label:'Poco común', color:'var(--uncommon)'  },
+  rare:      { label:'Raro',       color:'var(--rare)'      },
+  epic:      { label:'Épico',      color:'var(--epic)'      },
+  legendary: { label:'Legendario', color:'var(--legendary)' },
+};
+
+const PET_NAMES = [
+  'Luna','Rocky','Nube','Coco','Mango','Kiwi','Simba','Nala','Toby','Bella',
+  'Milo','Olivia','Rex','Maya','Pepe','Lola','Bruno','Nina','Max','Sasha',
+  'Leo','Frida','Chispa','Canela','Trufa','Pipo','Nube','Estrella','Sol','Bongo'
+];
+
+const FOOD_PER_5MIN = 1;
+
+/* ============ STORAGE ============ */
+
+const STORAGE_KEY = 'study-zoo-state-v1';
+
+function defaultState(){
+  return {
+    config: {
+      studyMin: 25, breakMin: 5, autoTransition: true,
+      progressWarnEnabled: true, progressWarnThresholdSec: 10,
+      theme: 'dark', timerLayout: 'circular', completionSound: 'clasico', soundMuted: false,
+    },
+    timer: { phase: 'study', status: 'idle', endTime: null, remainingMs: 25*60*1000, extraMs: 0 },
+    stats: {
+      sessionsToday: 0, lastSessionDateKey: null, streak: 0,
+      totalStudyMinutes: 0, totalSessions: 0,
+      totalFoodEarned: 0, totalFoodUsed: 0,
+    },
+    food: 0,
+    animals: [],
+    sessionLog: [], // { ts, dateKey, minutes }
+  };
+}
+
+// Shared by both the local-storage loader and the Firestore loader (same
+// state shape either way) so old/partial saves always end up with every
+// field the current version of the app expects.
+function normalizeState(parsed){
+  const base = defaultState();
+  return {
+    ...base,
+    ...parsed,
+    config: { ...base.config, ...(parsed.config||{}) },
+    timer: { ...base.timer, ...(parsed.timer||{}) },
+    stats: { ...base.stats, ...(parsed.stats||{}) },
+    sessionLog: parsed.sessionLog || [],
+  };
+}
+
+async function loadState(){
+  try{
+    const raw = await storage.getItem(STORAGE_KEY);
+    if(!raw) return defaultState();
+    return normalizeState(JSON.parse(raw));
+  }catch(e){ return defaultState(); }
+}
+
+/* ============ HELPERS ============ */
+
+function dateKey(d = new Date()){
+  return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate();
+}
+
+function daysBetween(key1, key2){
+  if(!key1 || !key2) return Infinity;
+  const [y1,m1,d1] = key1.split('-').map(Number);
+  const [y2,m2,d2] = key2.split('-').map(Number);
+  const t1 = Date.UTC(y1,m1-1,d1);
+  const t2 = Date.UTC(y2,m2-1,d2);
+  return Math.round((t2 - t1) / 86400000);
+}
+
+function fmtTime(ms){
+  const totalSec = Math.max(0, Math.ceil(ms/1000));
+  const m = Math.floor(totalSec/60);
+  const s = totalSec%60;
+  return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+// Species newly crossed by `totalMinutes` that aren't already owned, sorted
+// so the lowest threshold (and therefore the modal queue) reveals first.
+function getNewlyUnlockedSpecies(totalMinutes, ownedAnimals){
+  const ownedIds = new Set(ownedAnimals.map(a => a.speciesId));
+  return SPECIES
+    .filter(s => s.tiempoMinimoMinutos <= totalMinutes && !ownedIds.has(s.id))
+    .sort((a, b) => a.tiempoMinimoMinutos - b.tiempoMinimoMinutos);
+}
+
+function makeAnimalInstance(species){
+  const now = Date.now();
+  return {
+    id: 'a_' + now + '_' + Math.floor(Math.random()*100000),
+    speciesId: species.id,
+    name: PET_NAMES[Math.floor(Math.random()*PET_NAMES.length)],
+    obtainedAt: now,
+    lastFed: now,
+    feedCount: 0,
+  };
+}
+
+// Etapas de crecimiento visual según cuántas veces se alimentó al animal.
+// Reutiliza el sistema de comida existente — no agrega ninguna mecánica nueva.
+const GROWTH_ADULT_FEEDS = 3;
+const GROWTH_SHINY_FEEDS = 8;
+
+function growthStage(animal){
+  const count = animal.feedCount || 0;
+  if(count >= GROWTH_SHINY_FEEDS) return { key:'shiny', label:'Brillante', emoji:'✨', feedsToNext:null };
+  if(count >= GROWTH_ADULT_FEEDS) return { key:'adult', label:'Adulto', emoji:'', feedsToNext: GROWTH_SHINY_FEEDS - count };
+  return { key:'baby', label:'Bebé', emoji:'🍼', feedsToNext: GROWTH_ADULT_FEEDS - count };
+}
+
+function computeHunger(animal){
+  const hoursSince = (Date.now() - animal.lastFed) / 3600000;
+  const hunger = 100 - (hoursSince / 24) * 20; // -20 puntos cada 24h
+  return Math.max(0, Math.min(100, Math.round(hunger)));
+}
+
+function hungerState(hunger){
+  if(hunger >= 70) return { label:'Feliz', emoji:'😄', color:'var(--accent-2)' };
+  if(hunger >= 35) return { label:'Normal', emoji:'🙂', color:'var(--accent)' };
+  return { label:'Triste', emoji:'🥺', color:'var(--text-dim)' };
+}
+
+function phaseDurationMs(phase, cfg, extraMs){
+  const base = (phase === 'study' ? cfg.studyMin : cfg.breakMin) * 60000;
+  return base + (extraMs || 0);
+}
+
+function getRemainingMs(timer){
+  if(timer.status === 'running' && timer.endTime){
+    return timer.endTime - Date.now();
+  }
+  return timer.remainingMs;
+}
+
+/* ============ APP ============ */
+
+export default function App(){
+  const [state, setState] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState('timer');
+  const [unlockQueue, setUnlockQueue] = useState([]); // [{ species, instance }] shown one at a time
+  const [selectedAnimalId, setSelectedAnimalId] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [authUser, setAuthUser] = useState(null); // null = guest
+  const [authChecking, setAuthChecking] = useState(false);
+  const audioCtxRef = useRef(null);
+  const [, forceTick] = useState(0);
+
+  const finishLoading = useCallback((s) => {
+    // Catches up any species whose threshold is already covered by
+    // previously accumulated minutes (e.g. thresholds changed, migrating
+    // from an older save, or just-downloaded cloud progress) — done
+    // silently, without the celebration modal, since it's not tied to a
+    // just-completed session.
+    const newlyUnlocked = getNewlyUnlockedSpecies(s.stats.totalStudyMinutes, s.animals);
+    const patched = newlyUnlocked.length > 0
+      ? { ...s, animals: [...s.animals, ...newlyUnlocked.map(makeAnimalInstance)] }
+      : s;
+    setState(patched);
+    setReady(true);
+  }, []);
+
+  // Auth state drives where progress loads from: guest → local storage
+  // (Preferences/localStorage), logged in → Firestore. On login, cloud
+  // progress wins if it exists; if the account has no cloud doc yet (a
+  // brand-new account, or the guest just registered), the current local
+  // progress is uploaded as its starting point — that's the "migrate
+  // guest progress into the new account" behavior, with no special-casing
+  // needed beyond this one load path.
+  useEffect(() => {
+    let cancelled = false;
+    const unsub = onAuthChange(async (user) => {
+      if(cancelled) return;
+      // Set together (both before the first await) so React batches them
+      // into one update — the persist effect below must see authChecking
+      // flip to true in the SAME render as authUser changes, or it can
+      // slip in one write of the still-stale local state to the new
+      // account's cloud doc before the real cloud/local load below finishes.
+      setAuthChecking(true);
+      setAuthUser(user);
+      try{
+        if(user){
+          const cloud = await fetchCloudState(user.uid);
+          if(cloud){
+            finishLoading(normalizeState(cloud));
+          } else {
+            const localRaw = await storage.getItem(STORAGE_KEY);
+            const seed = localRaw ? normalizeState(JSON.parse(localRaw)) : defaultState();
+            await saveCloudState(user.uid, seed);
+            finishLoading(seed);
+          }
+        } else {
+          finishLoading(await loadState());
+        }
+      } catch(e){
+        // Firestore unreachable/misconfigured (e.g. security rules not set
+        // up yet) shouldn't strand the user on a loading screen forever —
+        // fall back to local progress so the app is still usable.
+        finishLoading(await loadState());
+      } finally {
+        if(!cancelled) setAuthChecking(false);
+      }
+    });
+    return () => { cancelled = true; unsub(); };
+  }, [finishLoading]);
+
+  // Persist on every change, once the initial load has completed: always
+  // to the local cache (so the app still works offline / as a fallback),
+  // and additionally to Firestore when signed in. Skipped while an auth
+  // transition is in flight (see above) to avoid writing stale state.
+  useEffect(() => {
+    if(!ready || !state || authChecking) return;
+    storage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if(authUser){
+      saveCloudState(authUser.uid, state);
+    }
+  }, [state, ready, authUser, authChecking]);
+
+  // Theme is applied as a class on <body> so every CSS custom property
+  // (--bg, --card, --primary, …) resolves to the selected palette.
+  useEffect(() => {
+    if(!state) return;
+    document.body.className = 'theme-' + (state.config.theme || 'dark');
+  }, [state && state.config.theme]);
+
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  const playTone = useCallback((freq, durationSec, peakGain) => {
+    try{
+      if(!audioCtxRef.current){
+        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(peakGain, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationSec);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); o.stop(ctx.currentTime + durationSec + 0.05);
+    }catch(e){ /* audio not available */ }
+  }, []);
+
+  // "Phase complete" sound — user picks one of a few variants in Config.
+  const playCompletionSound = useCallback((soundKey) => {
+    switch(soundKey){
+      case 'campana':
+        playTone(1046, 0.3, 0.22);
+        setTimeout(() => playTone(1568, 0.4, 0.2), 140);
+        break;
+      case 'suave':
+        playTone(523, 0.8, 0.15);
+        break;
+      case 'alerta':
+        playTone(1000, 0.12, 0.22);
+        setTimeout(() => playTone(1000, 0.12, 0.22), 160);
+        setTimeout(() => playTone(1000, 0.12, 0.22), 320);
+        break;
+      case 'clasico':
+      default:
+        playTone(880, 0.5, 0.25);
+    }
+  }, [playTone]);
+
+  // Subtler, shorter tick used for the progressive countdown warning —
+  // deliberately different from the completion sounds so the two are
+  // distinguishable regardless of which completion sound is selected.
+  const playWarningTick = useCallback(() => playTone(1400, 0.12, 0.15), [playTone]);
+
+  // newInstances are pre-built by the caller (the completion effect) so the
+  // exact same instances end up both in state.animals and in the modal
+  // queue — building them twice would give the stored animal and the
+  // celebration modal different names/ids for the same unlock.
+  const registerCompletedSession = useCallback((extraMinutes, newInstances) => {
+    setState(prev => {
+      if(!prev) return prev;
+      const todayKey = dateKey();
+      const minutes = prev.config.studyMin + extraMinutes;
+      let streak = prev.stats.streak;
+      let sessionsToday = prev.stats.sessionsToday;
+      if(prev.stats.lastSessionDateKey === todayKey){
+        sessionsToday += 1;
+      } else {
+        const diff = daysBetween(prev.stats.lastSessionDateKey, todayKey);
+        streak = (diff === 1) ? streak + 1 : 1;
+        sessionsToday = 1;
+      }
+      return {
+        ...prev,
+        stats: {
+          ...prev.stats,
+          sessionsToday,
+          streak,
+          lastSessionDateKey: todayKey,
+          totalStudyMinutes: prev.stats.totalStudyMinutes + minutes,
+          totalSessions: prev.stats.totalSessions + 1,
+        },
+        sessionLog: [...prev.sessionLog, { ts: Date.now(), dateKey: todayKey, minutes }],
+        animals: [...prev.animals, ...newInstances],
+      };
+    });
+  }, []);
+
+  /* ---- Timer tick ---- */
+  const timerStatus = state ? state.timer.status : null;
+  useEffect(() => {
+    if(timerStatus !== 'running') return;
+    const id = setInterval(() => forceTick(t => t+1), 250);
+    return () => clearInterval(id);
+  }, [timerStatus]);
+
+  // Re-render immediately when the app comes back to the foreground so the
+  // countdown doesn't look frozen after the OS suspended JS execution.
+  useEffect(() => {
+    if(!Capacitor.isNativePlatform()) return;
+    const sub = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if(isActive) forceTick(t => t+1);
+    });
+    return () => { sub.remove(); };
+  }, []);
+
+  // Intentionally not memoized: must recompute every tick (every 250ms while
+  // running) against Date.now(), even though state.timer itself doesn't change.
+  const remainingMs = state ? getRemainingMs(state.timer) : 0;
+
+  // Progressive countdown warning (foreground). Tracks which WARNING_POINTS
+  // have already played for the current phase run, so each point only
+  // fires once even though this checks on every 250ms tick.
+  const firedWarningPointsRef = useRef(new Set());
+  useEffect(() => {
+    firedWarningPointsRef.current = new Set();
+  }, [state && state.timer.endTime]);
+
+  useEffect(() => {
+    if(!state) return;
+    if(state.timer.status !== 'running') return;
+    if(state.config.progressWarnEnabled === false) return;
+    const threshold = state.config.progressWarnThresholdSec || 10;
+    const secondsRemaining = Math.ceil(remainingMs / 1000);
+    if(secondsRemaining <= 0) return;
+    if(!WARNING_POINTS.includes(secondsRemaining)) return;
+    if(secondsRemaining > threshold) return;
+    if(firedWarningPointsRef.current.has(secondsRemaining)) return;
+    firedWarningPointsRef.current.add(secondsRemaining);
+    if(!state.config.soundMuted) playWarningTick();
+  }, [remainingMs, state && state.timer.status]);
+
+  // handle natural completion
+  useEffect(() => {
+    if(!state) return;
+    if(state.timer.status === 'running' && remainingMs <= 0){
+      const finishedPhase = state.timer.phase;
+      const extraMinutes = Math.round((state.timer.extraMs || 0) / 60000);
+      if(!state.config.soundMuted) playCompletionSound(state.config.completionSound || 'clasico');
+      cancelAllNotifications();
+      if(finishedPhase === 'study'){
+        const minutes = state.config.studyMin + extraMinutes;
+        const newTotal = state.stats.totalStudyMinutes + minutes;
+        const newlyUnlockedSpecies = getNewlyUnlockedSpecies(newTotal, state.animals);
+        const newInstances = newlyUnlockedSpecies.map(makeAnimalInstance);
+        registerCompletedSession(extraMinutes, newInstances);
+        if(newInstances.length > 0){
+          setUnlockQueue(q => [
+            ...q,
+            ...newlyUnlockedSpecies.map((sp, i) => ({ species: sp, instance: newInstances[i] })),
+          ]);
+        }
+        showToast('¡Sesión de estudio completada!');
+      } else {
+        showToast('Descanso terminado. ¡A seguir!');
+      }
+      const nextPhase = finishedPhase === 'study' ? 'break' : 'study';
+      setState(prev => {
+        if(!prev) return prev;
+        const nextDuration = phaseDurationMs(nextPhase, prev.config, 0);
+        const autoRun = prev.config.autoTransition !== false;
+        if(autoRun){
+          const nextEndTime = Date.now() + nextDuration;
+          scheduleAllNotifications(nextEndTime, nextPhase, prev.config);
+          return {
+            ...prev,
+            timer: { phase: nextPhase, status: 'running', endTime: nextEndTime, remainingMs: nextDuration, extraMs: 0 },
+          };
+        }
+        return {
+          ...prev,
+          timer: { phase: nextPhase, status: 'idle', endTime: null, remainingMs: nextDuration, extraMs: 0 },
+        };
+      });
+    }
+  }, [remainingMs, state && state.timer.status]);
+
+  /* ---- Timer controls ---- */
+  const startTimer = () => {
+    setState(prev => {
+      if(!prev) return prev;
+      const endTime = Date.now() + prev.timer.remainingMs;
+      scheduleAllNotifications(endTime, prev.timer.phase, prev.config);
+      return { ...prev, timer: { ...prev.timer, status:'running', endTime } };
+    });
+  };
+  const pauseTimer = () => {
+    cancelAllNotifications();
+    setState(prev => {
+      if(!prev || prev.timer.status !== 'running') return prev;
+      const rem = prev.timer.endTime - Date.now();
+      return { ...prev, timer: { ...prev.timer, status:'paused', remainingMs: Math.max(0,rem), endTime: null } };
+    });
+  };
+  const resetPhase = () => {
+    cancelAllNotifications();
+    setState(prev => {
+      if(!prev) return prev;
+      return {
+        ...prev,
+        timer: {
+          phase: prev.timer.phase,
+          status: 'idle',
+          endTime: null,
+          remainingMs: phaseDurationMs(prev.timer.phase, prev.config, 0),
+          extraMs: 0,
+        },
+      };
+    });
+  };
+  const skipPhase = () => {
+    cancelAllNotifications();
+    setState(prev => {
+      if(!prev) return prev;
+      const next = prev.timer.phase === 'study' ? 'break' : 'study';
+      return {
+        ...prev,
+        timer: { phase: next, status:'idle', endTime:null, remainingMs: phaseDurationMs(next, prev.config, 0), extraMs: 0 },
+      };
+    });
+  };
+  const extendSession = (minutes) => {
+    setState(prev => {
+      if(!prev || prev.timer.phase !== 'study') return prev;
+      const addMs = minutes * 60000;
+      const foodGain = Math.floor(minutes / 5) * FOOD_PER_5MIN;
+      const t = prev.timer;
+      let newTimer;
+      if(t.status === 'running' && t.endTime){
+        const newEndTime = t.endTime + addMs;
+        newTimer = { ...t, endTime: newEndTime, extraMs: (t.extraMs||0) + addMs };
+        cancelAllNotifications();
+        scheduleAllNotifications(newEndTime, t.phase, prev.config);
+      } else {
+        newTimer = { ...t, remainingMs: t.remainingMs + addMs, extraMs: (t.extraMs||0) + addMs };
+      }
+      return {
+        ...prev,
+        timer: newTimer,
+        food: prev.food + foodGain,
+        stats: { ...prev.stats, totalFoodEarned: prev.stats.totalFoodEarned + foodGain },
+      };
+    });
+    if(Math.floor(minutes/5) > 0) showToast('+' + Math.floor(minutes/5) + ' 🍖 comida por estudiar extra');
+  };
+
+  const updateConfig = (studyMin, breakMin) => {
+    setState(prev => {
+      if(!prev) return prev;
+      const timerIsDefault = prev.timer.status === 'idle';
+      return {
+        ...prev,
+        config: { ...prev.config, studyMin, breakMin },
+        timer: timerIsDefault
+          ? { ...prev.timer, remainingMs: phaseDurationMs(prev.timer.phase, {studyMin, breakMin}, 0), extraMs:0 }
+          : prev.timer,
+      };
+    });
+  };
+
+  // Generic setter for standalone preferences (autoTransition, theme, sounds…)
+  // that shouldn't touch the timer's current remaining time.
+  const patchConfig = (patch) => {
+    setState(prev => {
+      if(!prev) return prev;
+      return { ...prev, config: { ...prev.config, ...patch } };
+    });
+  };
+
+  const feedAnimal = (animalId) => {
+    setState(prev => {
+      if(!prev || prev.food <= 0) return prev;
+      return {
+        ...prev,
+        food: prev.food - 1,
+        animals: prev.animals.map(a => a.id === animalId
+          ? { ...a, lastFed: Date.now(), feedCount: (a.feedCount||0) + 1 }
+          : a),
+        stats: { ...prev.stats, totalFoodUsed: prev.stats.totalFoodUsed + 1 },
+      };
+    });
+    showToast('¡Animal alimentado! 🍖');
+  };
+
+  const resetAllData = () => {
+    cancelAllNotifications();
+    setState(defaultState());
+    showToast('Datos reiniciados');
+  };
+
+  // Auth actions. All of them just call Firebase and let the onAuthChange
+  // listener (above) react — it already knows how to load the right state
+  // for whichever user (or lack thereof) comes back. They return an error
+  // message string on failure, or null on success, so the modal can show
+  // it inline instead of throwing.
+  const handleRegister = async (email, password) => {
+    try{ await registerWithEmail(email, password); return null; }
+    catch(e){ return authErrorMessage(e); }
+  };
+  const handleLogin = async (email, password) => {
+    try{ await loginWithEmail(email, password); return null; }
+    catch(e){ return authErrorMessage(e); }
+  };
+  const handleGoogleLogin = async () => {
+    try{ await loginWithGoogle(); return null; }
+    catch(e){ return authErrorMessage(e); }
+  };
+  const handleLogout = async () => {
+    await firebaseLogout();
+    showToast('Sesión cerrada');
+  };
+  const handleDeleteAccount = async () => {
+    if(!confirm('¿Eliminar tu cuenta y todo tu progreso en la nube? Esta acción no se puede deshacer.')) return;
+    try{
+      await firebaseDeleteAccount();
+      showToast('Cuenta eliminada');
+    }catch(e){
+      showToast(authErrorMessage(e));
+    }
+  };
+
+  if(!ready || !state){
+    return <div className="loading-screen">Cargando…</div>;
+  }
+
+  // Derived from live state (not a stored snapshot) so the detail modal
+  // reflects feedCount/hunger changes immediately after feeding, without
+  // needing to close and reopen it.
+  const selectedAnimal = selectedAnimalId
+    ? state.animals.find(a => a.id === selectedAnimalId) || null
+    : null;
+
+  return (
+    <React.Fragment>
+      <header className="app-header">
+        <h1>🌴 Study Zoo</h1>
+        <div className="streak-pill">🔥 <b>{state.stats.streak}</b> días</div>
+      </header>
+
+      <main>
+        {tab === 'timer' && (
+          <TimerScreen
+            state={state}
+            remainingMs={Math.max(0, remainingMs)}
+            onStart={startTimer}
+            onPause={pauseTimer}
+            onReset={resetPhase}
+            onSkip={skipPhase}
+            onExtend={extendSession}
+          />
+        )}
+        {tab === 'zoo' && (
+          <ZooScreen
+            state={state}
+            onSelect={(animal) => setSelectedAnimalId(animal.id)}
+          />
+        )}
+        {tab === 'stats' && (
+          <StatsScreen state={state} />
+        )}
+        {tab === 'config' && (
+          <ConfigScreen
+            state={state}
+            onUpdateConfig={updateConfig}
+            onPatchConfig={patchConfig}
+            onPreviewSound={playCompletionSound}
+            onResetAll={resetAllData}
+            authUser={authUser}
+            onRegister={handleRegister}
+            onLogin={handleLogin}
+            onGoogleLogin={handleGoogleLogin}
+            onLogout={handleLogout}
+            onDeleteAccount={handleDeleteAccount}
+          />
+        )}
+      </main>
+
+      <nav className="bottom-nav">
+        <button className={tab==='timer'?'active':''} onClick={()=>setTab('timer')}>
+          <span className="ic">⏱️</span> Temporizador
+        </button>
+        <button className={tab==='zoo'?'active':''} onClick={()=>setTab('zoo')}>
+          <span className="ic">🦁</span> Zoológico
+        </button>
+        <button className={tab==='stats'?'active':''} onClick={()=>setTab('stats')}>
+          <span className="ic">📊</span> Estadísticas
+        </button>
+        <button className={tab==='config'?'active':''} onClick={()=>setTab('config')}>
+          <span className="ic">⚙️</span> Config
+        </button>
+      </nav>
+
+      {unlockQueue.length > 0 && (
+        <NewAnimalModal data={unlockQueue[0]} onClose={() => setUnlockQueue(q => q.slice(1))} />
+      )}
+      {selectedAnimal && (
+        <AnimalDetailModal
+          animal={selectedAnimal}
+          food={state.food}
+          onFeed={feedAnimal}
+          onClose={() => setSelectedAnimalId(null)}
+        />
+      )}
+      {toast && <div className="toast">{toast}</div>}
+    </React.Fragment>
+  );
+}
+
+/* ============ TIMER SCREEN ============ */
+
+function timerStatusLabel(timer){
+  if(timer.status === 'running') return timer.phase==='study' ? 'Enfocándote…' : 'Descansando…';
+  if(timer.status === 'paused') return 'Pausado';
+  return timer.phase === 'study' ? 'Listo para estudiar' : 'Listo para descansar';
+}
+
+function CircularTimerVisual({ remainingMs, progress, phase, statusLabel }){
+  const radius = 116;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - Math.min(1, Math.max(0, progress)));
+  return (
+    <div className="timer-ring-wrap">
+      <div className="timer-ring">
+        <svg width="260" height="260">
+          <circle className="bg" cx="130" cy="130" r={radius}/>
+          <circle
+            className={'fg ' + phase}
+            cx="130" cy="130" r={radius}
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+          />
+        </svg>
+        <div className="timer-center">
+          <div className="timer-time">{fmtTime(remainingMs)}</div>
+          <div className="timer-sub">{statusLabel}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BarTimerVisual({ remainingMs, progress, phase, statusLabel }){
+  const pct = Math.min(1, Math.max(0, progress)) * 100;
+  return (
+    <div className="timer-bar-wrap">
+      <div className="timer-bar-time">{fmtTime(remainingMs)}</div>
+      <div className="timer-sub" style={{marginBottom:14}}>{statusLabel}</div>
+      <div className="timer-bar-track">
+        <div className={'timer-bar-fill ' + phase} style={{width: pct + '%'}}></div>
+      </div>
+    </div>
+  );
+}
+
+function MinimalTimerVisual({ remainingMs, statusLabel }){
+  return (
+    <div className="timer-minimal-wrap">
+      <div className="timer-minimal-time">{fmtTime(remainingMs)}</div>
+      <div className="timer-sub">{statusLabel}</div>
+    </div>
+  );
+}
+
+function TimerScreen({ state, remainingMs, onStart, onPause, onReset, onSkip, onExtend }){
+  const { timer, config, stats, food } = state;
+  const totalMs = (timer.phase === 'study' ? config.studyMin : config.breakMin) * 60000 + (timer.extraMs||0);
+  const progress = totalMs > 0 ? 1 - (remainingMs / totalMs) : 0;
+  const statusLabel = timerStatusLabel(timer);
+  const layout = config.timerLayout || 'circular';
+
+  return (
+    <React.Fragment>
+      <div className="phase-toggle">
+        <span className={'phase-chip study ' + (timer.phase==='study' ? 'active study' : '')}>📚 Estudio</span>
+        <span className={'phase-chip break ' + (timer.phase==='break' ? 'active break' : '')}>☕ Descanso</span>
+      </div>
+
+      {layout === 'bar' ? (
+        <BarTimerVisual remainingMs={remainingMs} progress={progress} phase={timer.phase} statusLabel={statusLabel} />
+      ) : layout === 'minimal' ? (
+        <MinimalTimerVisual remainingMs={remainingMs} statusLabel={statusLabel} />
+      ) : (
+        <CircularTimerVisual remainingMs={remainingMs} progress={progress} phase={timer.phase} statusLabel={statusLabel} />
+      )}
+
+      <div className="timer-controls">
+        {timer.status !== 'running' ? (
+          <button className="btn primary" onClick={onStart}>▶ Iniciar</button>
+        ) : (
+          <button className="btn primary" onClick={onPause}>⏸ Pausar</button>
+        )}
+        <button className="btn" onClick={onReset}>↺ Reiniciar</button>
+        <button className="btn ghost" onClick={onSkip}>⏭ Saltar fase</button>
+      </div>
+
+      {timer.phase === 'study' && (
+        <div className="extend-row">
+          <button className="btn small" onClick={() => onExtend(5)}>+5 min extra (🍖 comida)</button>
+        </div>
+      )}
+
+      <div className="stats-row">
+        <div className="stat-card">
+          <div className="val">{stats.sessionsToday}</div>
+          <div className="lbl">Sesiones hoy</div>
+        </div>
+        <div className="stat-card">
+          <div className="val">{stats.streak}</div>
+          <div className="lbl">Racha (días)</div>
+        </div>
+        <div className="stat-card">
+          <div className="val">{stats.totalSessions}</div>
+          <div className="lbl">Total sesiones</div>
+        </div>
+      </div>
+
+      <div className="food-banner">
+        <div className="left">
+          <span className="emoji">🍖</span>
+          <div>
+            <div style={{fontWeight:700}}>{food} comida disponible</div>
+            <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>Estudia tiempo extra para conseguir más</div>
+          </div>
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+/* ============ ZOO SCREEN ============ */
+
+function AnimalCard({ animal, species, onSelect }){
+  const hunger = computeHunger(animal);
+  const stage = growthStage(animal);
+  return (
+    <div className={'animal-card stage-' + stage.key} onClick={() => onSelect(animal)}>
+      <span className="rarity-dot" style={{background: RARITY_META[species.rarity].color}}></span>
+      {stage.emoji && <span className="stage-badge">{stage.emoji}</span>}
+      <span className="emoji">{species.emoji}</span>
+      <div className="nm">{animal.name}</div>
+      <div className="hunger-bar">
+        <div className="hunger-fill" style={{width: hunger+'%', background: hungerState(hunger).color}}></div>
+      </div>
+    </div>
+  );
+}
+
+function LockedCard({ species, totalStudyMinutes }){
+  const remaining = Math.max(0, species.tiempoMinimoMinutos - totalStudyMinutes);
+  return (
+    <div className="animal-card locked" title="Todavía no descubierto">
+      <span className="rarity-dot dim" style={{background: RARITY_META[species.rarity].color}}></span>
+      <span className="emoji dim">❔</span>
+      <div className="nm">???</div>
+      <div className="lock-remaining">Faltan {remaining} min</div>
+    </div>
+  );
+}
+
+function ZooScreen({ state, onSelect }){
+  const [rarityFilter, setRarityFilter] = useState('all');
+  const [stateFilter, setStateFilter] = useState('all');
+  const [speciesQuery, setSpeciesQuery] = useState('');
+  const [viewMode, setViewMode] = useState('grid');
+
+  const uniqueSpeciesCount = useMemo(() => {
+    return new Set(state.animals.map(a => a.speciesId)).size;
+  }, [state.animals]);
+
+  const query = speciesQuery.trim().toLowerCase();
+
+  const matchesFilters = useCallback((a) => {
+    const sp = SPECIES.find(s=>s.id===a.speciesId);
+    if(rarityFilter !== 'all' && sp.rarity !== rarityFilter) return false;
+    if(query && !sp.name.toLowerCase().includes(query)) return false;
+    if(stateFilter !== 'all'){
+      const h = computeHunger(a);
+      const st = hungerState(h).label.toLowerCase();
+      if(stateFilter === 'happy' && st !== 'feliz') return false;
+      if(stateFilter === 'sad' && st === 'feliz') return false;
+    }
+    return true;
+  }, [rarityFilter, stateFilter, query]);
+
+  const filtered = useMemo(() => {
+    return state.animals.filter(matchesFilters).sort((a,b) => b.obtainedAt - a.obtainedAt);
+  }, [state.animals, matchesFilters]);
+
+  const filters = (
+    <React.Fragment>
+      <div className="filters">
+        <span className={'filter-chip ' + (viewMode==='grid'?'active':'')} onClick={()=>setViewMode('grid')}>🔲 Grilla</span>
+        <span className={'filter-chip ' + (viewMode==='habitat'?'active':'')} onClick={()=>setViewMode('habitat')}>🗺️ Hábitats</span>
+      </div>
+      <input
+        className="species-search"
+        type="search"
+        placeholder="Buscar por especie (ej. León, Zorro…)"
+        value={speciesQuery}
+        onChange={e => setSpeciesQuery(e.target.value)}
+      />
+      <div className="filters">
+        <span className={'filter-chip ' + (rarityFilter==='all'?'active':'')} onClick={()=>setRarityFilter('all')}>Todas</span>
+        {Object.entries(RARITY_META).map(([key, meta]) => (
+          <span key={key} className={'filter-chip ' + (rarityFilter===key?'active':'')} onClick={()=>setRarityFilter(key)}>{meta.label}</span>
+        ))}
+      </div>
+      <div className="filters">
+        <span className={'filter-chip ' + (stateFilter==='all'?'active':'')} onClick={()=>setStateFilter('all')}>Todos los estados</span>
+        <span className={'filter-chip ' + (stateFilter==='happy'?'active':'')} onClick={()=>setStateFilter('happy')}>😄 Felices</span>
+        <span className={'filter-chip ' + (stateFilter==='sad'?'active':'')} onClick={()=>setStateFilter('sad')}>🥺 Necesitan comida</span>
+      </div>
+    </React.Fragment>
+  );
+
+  return (
+    <React.Fragment>
+      <div className="zoo-header">
+        <div className="zoo-count">{uniqueSpeciesCount} de {SPECIES.length} especies · {state.animals.length} animales</div>
+      </div>
+
+      {filters}
+
+      {state.animals.length === 0 ? (
+        <div className="empty-state">
+          <div className="big">🐣</div>
+          <div>Tu zoológico está vacío todavía.</div>
+          <div>Completa una sesión de estudio para conseguir tu primer animal.</div>
+        </div>
+      ) : viewMode === 'grid' ? (
+        filtered.length === 0 ? (
+          <div className="empty-state">
+            <div className="big">🔍</div>
+            <div>Ningún animal coincide con estos filtros.</div>
+          </div>
+        ) : (
+          <div className="animal-grid">
+            {filtered.map(a => (
+              <AnimalCard key={a.id} animal={a} species={SPECIES.find(s=>s.id===a.speciesId)} onSelect={onSelect} />
+            ))}
+          </div>
+        )
+      ) : (
+        <HabitatView state={state} rarityFilter={rarityFilter} speciesQuery={query} matchesFilters={matchesFilters} onSelect={onSelect} />
+      )}
+    </React.Fragment>
+  );
+}
+
+function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSelect }){
+  const sections = useMemo(() => {
+    return HABITATS.map(hab => {
+      const speciesInHabitat = SPECIES.filter(s =>
+        s.habitat === hab.id &&
+        (rarityFilter==='all' || s.rarity===rarityFilter) &&
+        (!speciesQuery || s.name.toLowerCase().includes(speciesQuery))
+      );
+      if(speciesInHabitat.length === 0) return null;
+
+      let anyOwnedInHabitat = false;
+      const visibleCards = [];
+      speciesInHabitat.forEach(sp => {
+        const allOwnedOfSpecies = state.animals.filter(a => a.speciesId === sp.id);
+        if(allOwnedOfSpecies.length > 0) anyOwnedInHabitat = true;
+        const matching = allOwnedOfSpecies.filter(matchesFilters);
+        if(matching.length > 0){
+          matching.forEach(a => visibleCards.push(<AnimalCard key={a.id} animal={a} species={sp} onSelect={onSelect} />));
+        } else if(allOwnedOfSpecies.length === 0){
+          visibleCards.push(<LockedCard key={sp.id} species={sp} totalStudyMinutes={state.stats.totalStudyMinutes} />);
+        }
+      });
+
+      const ownedCount = speciesInHabitat.filter(sp => state.animals.some(a => a.speciesId === sp.id)).length;
+      const emptyMessage = anyOwnedInHabitat
+        ? 'Ningún animal de este hábitat coincide con los filtros.'
+        : 'Ningún animal descubierto aquí todavía.';
+      return { hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage };
+    }).filter(Boolean);
+  }, [state.animals, state.stats.totalStudyMinutes, rarityFilter, matchesFilters]);
+
+  return (
+    <React.Fragment>
+      {sections.map(({ hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage }) => (
+        <div key={hab.id} className="habitat-section">
+          <div className="habitat-title">
+            <span>{hab.emoji} {hab.label}</span>
+            <span className="habitat-count">{ownedCount} de {speciesInHabitat.length}</span>
+          </div>
+          {visibleCards.length > 0 ? (
+            <div className="animal-grid">{visibleCards}</div>
+          ) : (
+            <div className="habitat-empty">{emptyMessage}</div>
+          )}
+        </div>
+      ))}
+    </React.Fragment>
+  );
+}
+
+/* ============ STATS SCREEN ============ */
+
+function StatsScreen({ state }){
+  const [range, setRange] = useState(7);
+
+  const dailyData = useMemo(() => {
+    const days = [];
+    const now = new Date();
+    for(let i = range - 1; i >= 0; i--){
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push({ key: dateKey(d), date: d });
+    }
+    const minutesByKey = {};
+    state.sessionLog.forEach(s => { minutesByKey[s.dateKey] = (minutesByKey[s.dateKey] || 0) + s.minutes; });
+    return days.map(d => ({ ...d, minutes: minutesByKey[d.key] || 0 }));
+  }, [state.sessionLog, range]);
+
+  const maxMinutes = Math.max(1, ...dailyData.map(d => d.minutes));
+  const totalRangeMinutes = dailyData.reduce((sum, d) => sum + d.minutes, 0);
+
+  const sessionsThisWeek = useMemo(() => {
+    const cutoff = Date.now() - 7 * 86400000;
+    return state.sessionLog.filter(s => s.ts >= cutoff).length;
+  }, [state.sessionLog]);
+
+  const totalHours = Math.floor(state.stats.totalStudyMinutes / 60);
+  const totalMins = state.stats.totalStudyMinutes % 60;
+  const todayKey = dateKey();
+
+  const weekdayLabel = (d) => d.toLocaleDateString('es-ES', { weekday: 'short' }).replace('.', '');
+  const dayLabel = (d) => d.getDate();
+
+  return (
+    <React.Fragment>
+      <div className="config-section" style={{marginTop:10}}>
+        <h3>Resumen general</h3>
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="val">{totalHours}h {totalMins}m</div>
+            <div className="lbl">Tiempo total estudiado</div>
+          </div>
+        </div>
+        <div className="stats-row" style={{marginTop:10}}>
+          <div className="stat-card">
+            <div className="val">{state.stats.totalSessions}</div>
+            <div className="lbl">Sesiones totales</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{sessionsThisWeek}</div>
+            <div className="lbl">Últimos 7 días</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{state.stats.streak}</div>
+            <div className="lbl">Racha actual</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Comida</h3>
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="val">{state.stats.totalFoodEarned}</div>
+            <div className="lbl">Ganada</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{state.stats.totalFoodUsed}</div>
+            <div className="lbl">Usada</div>
+          </div>
+          <div className="stat-card">
+            <div className="val">{state.food}</div>
+            <div className="lbl">Disponible</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="config-section">
+        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+          <h3 style={{marginBottom:0}}>Estudio por día</h3>
+          <div style={{display:'flex', gap:6}}>
+            <span className={'filter-chip ' + (range===7?'active':'')} onClick={()=>setRange(7)}>7 días</span>
+            <span className={'filter-chip ' + (range===30?'active':'')} onClick={()=>setRange(30)}>30 días</span>
+          </div>
+        </div>
+        <div style={{fontSize:'0.78rem', color:'var(--text-dim)', margin:'8px 0'}}>
+          {Math.floor(totalRangeMinutes/60)}h {totalRangeMinutes%60}m en los últimos {range} días
+        </div>
+        <div className="chart-scroll">
+          <div className="chart" style={{minWidth: range===30 ? 620 : 'auto'}}>
+            {dailyData.map(d => (
+              <div key={d.key} className="chart-col" title={d.minutes + ' min'}>
+                <div className="chart-bar-track">
+                  <div
+                    className={'chart-bar' + (d.key===todayKey ? ' today' : '')}
+                    style={{height: Math.max(4, (d.minutes/maxMinutes)*100) + '%'}}
+                  ></div>
+                </div>
+                <div className="chart-lbl">{range===7 ? weekdayLabel(d.date) : dayLabel(d.date)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+/* ============ CONFIG SCREEN ============ */
+
+const PRESETS = [
+  { studyMin:25, breakMin:5, label:'Clásico' },
+  { studyMin:50, breakMin:10, label:'Largo' },
+  { studyMin:15, breakMin:3, label:'Corto' },
+];
+
+const WARN_THRESHOLD_OPTIONS = [
+  { value:2, label:'2s' },
+  { value:5, label:'5s' },
+  { value:10, label:'10s' },
+  { value:15, label:'15s' },
+  { value:30, label:'30s' },
+  { value:60, label:'1 min' },
+];
+
+const THEME_OPTIONS = [
+  { value:'dark', label:'Oscuro', emoji:'🌙' },
+  { value:'light', label:'Claro', emoji:'☀️' },
+  { value:'selva', label:'Selva', emoji:'🌴' },
+  { value:'sabana', label:'Sabana', emoji:'🌾' },
+];
+
+const LAYOUT_OPTIONS = [
+  { value:'circular', label:'Circular', emoji:'⭕' },
+  { value:'bar', label:'Barra', emoji:'▬' },
+  { value:'minimal', label:'Minimalista', emoji:'🔢' },
+];
+
+const SOUND_OPTIONS = [
+  { value:'clasico', label:'Clásico' },
+  { value:'campana', label:'Campana' },
+  { value:'suave', label:'Suave' },
+  { value:'alerta', label:'Alerta' },
+];
+
+function ConfigScreen({
+  state, onUpdateConfig, onPatchConfig, onPreviewSound, onResetAll,
+  authUser, onRegister, onLogin, onGoogleLogin, onLogout, onDeleteAccount,
+}){
+  const { config } = state;
+  const isPresetActive = (p) => p.studyMin===config.studyMin && p.breakMin===config.breakMin;
+  const isCustomActive = !PRESETS.some(isPresetActive);
+  const [authModalMode, setAuthModalMode] = useState(null); // 'login' | 'register' | null
+
+  const [customStudy, setCustomStudy] = useState(String(config.studyMin));
+  const [customBreak, setCustomBreak] = useState(String(config.breakMin));
+
+  useEffect(() => { setCustomStudy(String(config.studyMin)); setCustomBreak(String(config.breakMin)); }, [config.studyMin, config.breakMin]);
+
+  const clamp = (raw, min, max, fallback) => {
+    const n = parseInt(raw, 10);
+    if(isNaN(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+
+  const saveCustom = () => {
+    const study = clamp(customStudy, 1, 180, config.studyMin);
+    const brk = clamp(customBreak, 1, 60, config.breakMin);
+    setCustomStudy(String(study));
+    setCustomBreak(String(brk));
+    onUpdateConfig(study, brk);
+  };
+
+  return (
+    <React.Fragment>
+      <div className="config-section">
+        <h3>Cuenta</h3>
+        {authUser ? (
+          <div className="account-card">
+            <div>
+              <div style={{fontWeight:700}}>{authUser.email || 'Cuenta de Google'}</div>
+              <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>Tu progreso se sincroniza en la nube</div>
+            </div>
+            <button className="btn small" onClick={onLogout}>Cerrar sesión</button>
+          </div>
+        ) : (
+          <React.Fragment>
+            <div style={{fontSize:'0.8rem', color:'var(--text-dim)', marginBottom:10}}>
+              Estás jugando como invitado — tu progreso se guarda solo en este dispositivo.
+              Creá una cuenta para no perderlo y sincronizarlo entre dispositivos.
+            </div>
+            <div style={{display:'flex', gap:8}}>
+              <button className="btn primary" style={{flex:1}} onClick={() => setAuthModalMode('register')}>Crear cuenta</button>
+              <button className="btn" style={{flex:1}} onClick={() => setAuthModalMode('login')}>Iniciar sesión</button>
+            </div>
+          </React.Fragment>
+        )}
+      </div>
+
+      {authModalMode && (
+        <AuthModal
+          mode={authModalMode}
+          onModeChange={setAuthModalMode}
+          onRegister={onRegister}
+          onLogin={onLogin}
+          onGoogleLogin={onGoogleLogin}
+          onClose={() => setAuthModalMode(null)}
+        />
+      )}
+
+      <div className="config-section">
+        <h3>Duración de sesión</h3>
+        <div className="preset-grid">
+          {PRESETS.map(p => (
+            <div key={p.label} className={'preset-btn ' + (isPresetActive(p)?'active':'')} onClick={() => onUpdateConfig(p.studyMin, p.breakMin)}>
+              <div className="big">{p.studyMin}/{p.breakMin}</div>
+              <div className="small">{p.label}</div>
+            </div>
+          ))}
+          <div className={'preset-btn ' + (isCustomActive?'active':'')} onClick={saveCustom}>
+            <div className="big">Custom</div>
+            <div className="small">Personalizado</div>
+          </div>
+        </div>
+
+        <div className="custom-row">
+          <div className="field">
+            <label>Estudio (min)</label>
+            <input type="number" min="1" max="180" value={customStudy}
+              onChange={e => setCustomStudy(e.target.value)}
+              onBlur={() => setCustomStudy(String(clamp(customStudy, 1, 180, config.studyMin)))} />
+          </div>
+          <div className="field">
+            <label>Descanso (min)</label>
+            <input type="number" min="1" max="60" value={customBreak}
+              onChange={e => setCustomBreak(e.target.value)}
+              onBlur={() => setCustomBreak(String(clamp(customBreak, 1, 60, config.breakMin)))} />
+          </div>
+        </div>
+        <div style={{marginTop:10}}>
+          <button className="btn primary block" onClick={saveCustom}>Guardar personalizado</button>
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Comportamiento</h3>
+        <label className="switch-row">
+          <div>
+            <div style={{fontWeight:600}}>Iniciar siguiente fase automáticamente</div>
+            <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>
+              Al terminar estudio o descanso, arranca solo la fase siguiente
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={config.autoTransition !== false}
+            onChange={e => onPatchConfig({ autoTransition: e.target.checked })}
+          />
+        </label>
+      </div>
+
+      <div className="config-section">
+        <h3>Aviso antes de terminar</h3>
+        <label className="switch-row">
+          <div>
+            <div style={{fontWeight:600}}>Avisos progresivos</div>
+            <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>
+              Tics cortos que se aceleran cerca del final de cada fase
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={config.progressWarnEnabled !== false}
+            onChange={e => onPatchConfig({ progressWarnEnabled: e.target.checked })}
+          />
+        </label>
+
+        {config.progressWarnEnabled !== false && (
+          <div style={{marginTop:10}}>
+            <div style={{fontSize:'0.78rem', color:'var(--text-dim)', marginBottom:8}}>
+              Empezar a avisar desde:
+            </div>
+            <div className="filters">
+              {WARN_THRESHOLD_OPTIONS.map(opt => (
+                <span
+                  key={opt.value}
+                  className={'filter-chip ' + ((config.progressWarnThresholdSec || 10) === opt.value ? 'active' : '')}
+                  onClick={() => onPatchConfig({ progressWarnThresholdSec: opt.value })}
+                >
+                  {opt.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="config-section">
+        <h3>Tema</h3>
+        <div className="preset-grid">
+          {THEME_OPTIONS.map(opt => (
+            <div
+              key={opt.value}
+              className={'preset-btn ' + ((config.theme || 'dark') === opt.value ? 'active' : '')}
+              onClick={() => onPatchConfig({ theme: opt.value })}
+            >
+              <div className="big">{opt.emoji}</div>
+              <div className="small">{opt.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Diseño del temporizador</h3>
+        <div className="preset-grid">
+          {LAYOUT_OPTIONS.map(opt => (
+            <div
+              key={opt.value}
+              className={'preset-btn ' + ((config.timerLayout || 'circular') === opt.value ? 'active' : '')}
+              onClick={() => onPatchConfig({ timerLayout: opt.value })}
+            >
+              <div className="big">{opt.emoji}</div>
+              <div className="small">{opt.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Sonido de notificación</h3>
+        <label className="switch-row">
+          <div style={{fontWeight:600}}>Silenciar sonidos</div>
+          <input
+            type="checkbox"
+            checked={!!config.soundMuted}
+            onChange={e => onPatchConfig({ soundMuted: e.target.checked })}
+          />
+        </label>
+
+        {!config.soundMuted && (
+          <div style={{marginTop:10}}>
+            <div className="filters">
+              {SOUND_OPTIONS.map(opt => (
+                <span
+                  key={opt.value}
+                  className={'filter-chip ' + ((config.completionSound || 'clasico') === opt.value ? 'active' : '')}
+                  onClick={() => onPatchConfig({ completionSound: opt.value })}
+                >
+                  {opt.label}
+                </span>
+              ))}
+            </div>
+            <button
+              className="btn small"
+              style={{marginTop:10}}
+              onClick={() => onPreviewSound(config.completionSound || 'clasico')}
+            >
+              🔊 Probar sonido
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="danger-zone">
+        <h3 style={{color:'var(--danger)'}}>Zona de peligro</h3>
+        <button className="btn block" style={{borderColor:'var(--danger)', color:'var(--danger)'}}
+          onClick={() => { if(confirm('¿Borrar todo tu progreso? Esta acción no se puede deshacer.')) onResetAll(); }}>
+          Reiniciar todos los datos
+        </button>
+        {authUser && (
+          <button className="btn block" style={{marginTop:10, borderColor:'var(--danger)', color:'var(--danger)'}}
+            onClick={onDeleteAccount}>
+            Eliminar cuenta
+          </button>
+        )}
+      </div>
+    </React.Fragment>
+  );
+}
+
+function AuthModal({ mode, onModeChange, onRegister, onLogin, onGoogleLogin, onClose }){
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const isRegister = mode === 'register';
+
+  const submit = async () => {
+    setError(null);
+    if(!email || !password){ setError('Completá email y contraseña.'); return; }
+    if(isRegister && password !== confirmPassword){ setError('Las contraseñas no coinciden.'); return; }
+    setBusy(true);
+    const err = isRegister ? await onRegister(email, password) : await onLogin(email, password);
+    setBusy(false);
+    if(err) setError(err);
+    else onClose();
+  };
+
+  const submitGoogle = async () => {
+    setError(null);
+    setBusy(true);
+    const err = await onGoogleLogin();
+    setBusy(false);
+    if(err) setError(err);
+    else onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div style={{fontSize:'1.2rem', fontWeight:700, marginBottom:16}}>
+          {isRegister ? 'Crear cuenta' : 'Iniciar sesión'}
+        </div>
+
+        <div style={{textAlign:'left', display:'flex', flexDirection:'column', gap:10}}>
+          <div className="field">
+            <label>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" />
+          </div>
+          <div className="field">
+            <label>Contraseña</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              autoComplete={isRegister ? 'new-password' : 'current-password'} />
+          </div>
+          {isRegister && (
+            <div className="field">
+              <label>Confirmar contraseña</label>
+              <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+            </div>
+          )}
+        </div>
+
+        {error && <div style={{color:'var(--danger)', fontSize:'0.8rem', marginTop:10, textAlign:'left'}}>{error}</div>}
+
+        <div className="modal-actions" style={{flexDirection:'column'}}>
+          <button className="btn primary block" disabled={busy} onClick={submit}>
+            {busy ? 'Un momento…' : (isRegister ? 'Crear cuenta' : 'Iniciar sesión')}
+          </button>
+          {googleSignInAvailable && (
+            <button className="btn block" disabled={busy} onClick={submitGoogle} style={{marginTop:8}}>
+              Continuar con Google
+            </button>
+          )}
+          <button className="btn ghost block" style={{marginTop:8}}
+            onClick={() => onModeChange(isRegister ? 'login' : 'register')}>
+            {isRegister ? '¿Ya tenés cuenta? Iniciar sesión' : '¿No tenés cuenta? Crear una'}
+          </button>
+          <button className="btn ghost block" style={{marginTop:4}} onClick={onClose}>Cancelar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============ MODALS ============ */
+
+function NewAnimalModal({ data, onClose }){
+  const { species, instance } = data;
+  const meta = RARITY_META[species.rarity];
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div style={{color:'var(--text-dim)', fontSize:'0.85rem'}}>¡Nuevo animal desbloqueado!</div>
+        <div className="big-emoji">{species.emoji}</div>
+        <div style={{fontSize:'1.3rem', fontWeight:700}}>{instance.name}</div>
+        <div style={{color:'var(--text-dim)'}}>{species.name}</div>
+        <span className="rarity-badge" style={{background: meta.color + '33', color: meta.color}}>{meta.label}</span>
+        <div className="modal-actions">
+          <button className="btn primary block" onClick={onClose}>¡Genial!</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnimalDetailModal({ animal, food, onFeed, onClose }){
+  const sp = SPECIES.find(s => s.id === animal.speciesId);
+  const meta = RARITY_META[sp.rarity];
+  const hunger = computeHunger(animal);
+  const hs = hungerState(hunger);
+  const stage = growthStage(animal);
+  const feedCount = animal.feedCount || 0;
+  const obtainedDate = new Date(animal.obtainedAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' });
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className={'big-emoji stage-' + stage.key}>{sp.emoji}</div>
+        <div style={{fontSize:'1.3rem', fontWeight:700}}>{animal.name}</div>
+        <div style={{color:'var(--text-dim)'}}>{sp.name}</div>
+        <span className="rarity-badge" style={{background: meta.color + '33', color: meta.color}}>{meta.label}</span>
+
+        <div style={{marginTop:16, textAlign:'left', fontSize:'0.85rem', color:'var(--text-dim)'}}>
+          <div>Obtenido: {obtainedDate}</div>
+          <div style={{marginTop:8, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <span>Etapa: {stage.emoji} {stage.label}</span>
+            <span>Alimentado {feedCount}×</span>
+          </div>
+          {stage.feedsToNext !== null && (
+            <div style={{fontSize:'0.75rem', marginTop:2}}>
+              Faltan {stage.feedsToNext} alimentadas más para la próxima etapa
+            </div>
+          )}
+          <div style={{marginTop:12, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <span>Hambre: {hs.emoji} {hs.label}</span>
+            <span>{hunger}%</span>
+          </div>
+          <div className="hunger-bar" style={{marginTop:6}}>
+            <div className="hunger-fill" style={{width: hunger+'%', background: hs.color}}></div>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={onClose}>Cerrar</button>
+          <button className="btn primary" disabled={food<=0} onClick={() => onFeed(animal.id)}>
+            🍖 Alimentar {food<=0 ? '(sin comida)' : ''}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
