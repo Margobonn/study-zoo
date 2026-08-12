@@ -12,6 +12,7 @@ import {
   registerWithEmail,
   loginWithEmail,
   loginWithGoogle,
+  checkGoogleRedirectResult,
   logout as firebaseLogout,
   deleteAccount as firebaseDeleteAccount,
   fetchCloudState,
@@ -372,6 +373,16 @@ export default function App(){
     });
     return () => { cancelled = true; unsub(); };
   }, [finishLoading]);
+
+  // Mobile web signs in via a full-page redirect (see loginWithGoogle in
+  // firebase.js) instead of a popup, so there's no login modal left open on
+  // the page load that comes back from Google to show an inline error the
+  // way the popup/email flows do — surface it as a toast here instead. A
+  // successful result doesn't need handling: onAuthChange above already
+  // picks up the signed-in user on its own.
+  useEffect(() => {
+    checkGoogleRedirectResult().catch(e => showToast(authErrorMessage(e)));
+  }, []);
 
   // Persist on every change, once the initial load has completed: always
   // to the local cache (so the app still works offline / as a fallback),

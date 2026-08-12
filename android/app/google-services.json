@@ -14,6 +14,22 @@
       },
       "oauth_client": [
         {
+          "client_id": "1009620250842-d772qe5usd4svm4aaiclbf7p2tm83ui6.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.studyzoo.app",
+            "certificate_hash": "84f7d9bb8c64f002f7d8d784c59dacb12645bed8"
+          }
+        },
+        {
+          "client_id": "1009620250842-j013jdj33fpj4ogj3ucpirk8ps9be5t0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.studyzoo.app",
+            "certificate_hash": "dec59dab34d7a3e4bf907ddfb0ecb337d5082187"
+          }
+        },
+        {
           "client_id": "1009620250842-02ckfia9anjliuldmi6q4bka8k6m6r8i.apps.googleusercontent.com",
           "client_type": 3
         }

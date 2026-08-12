@@ -5,6 +5,8 @@ import {
   signInWithEmailAndPassword,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   deleteUser,
   onAuthStateChanged,
@@ -46,6 +48,14 @@ export async function loginWithEmail(email, password){
   return cred.user;
 }
 
+// Mobile browsers routinely block or kill the popup window signInWithPopup
+// opens (shows as a blank about:blank tab that closes itself), so mobile web
+// uses a full-page redirect instead. Desktop keeps the popup since it's a
+// smoother UX there and doesn't hit that failure mode.
+function isMobileWeb(){
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
 export async function loginWithGoogle(){
   if(Capacitor.isNativePlatform()){
     // Drives the native Google Sign-In SDK; the plugin syncs the result
@@ -54,8 +64,24 @@ export async function loginWithGoogle(){
     const result = await FirebaseAuthentication.signInWithGoogle();
     return result.user;
   }
+  if(isMobileWeb()){
+    // Navigates away immediately — this promise never resolves in normal
+    // operation. The result comes back via checkGoogleRedirectResult() on
+    // the next page load, and onAuthChange() picks up the signed-in user.
+    await signInWithRedirect(auth, new GoogleAuthProvider());
+    return null;
+  }
   const cred = await signInWithPopup(auth, new GoogleAuthProvider());
   return cred.user;
+}
+
+// Call once on app startup (web only) to pick up the result of a redirect
+// sign-in that completed on this page load, and to surface any error from
+// it — errors that happen during the redirect round-trip have no login
+// modal left open to catch them inline the way popup/email errors do.
+export async function checkGoogleRedirectResult(){
+  const cred = await getRedirectResult(auth);
+  return cred ? cred.user : null;
 }
 
 export async function logout(){
@@ -79,6 +105,10 @@ export async function saveCloudState(uid, state){
 
 export function authErrorMessage(err){
   const code = err && err.code;
+  // Logged unconditionally (not just for unmapped codes) so the console
+  // always has the real Firebase error to diagnose against, regardless of
+  // which of the friendlier messages below ends up on screen.
+  console.error('[Firebase auth error]', code, err && err.message);
   const map = {
     'auth/email-already-in-use': 'Ese email ya tiene una cuenta — probá iniciar sesión.',
     'auth/invalid-email': 'Email inválido.',
@@ -89,6 +119,11 @@ export function authErrorMessage(err){
     'auth/too-many-requests': 'Demasiados intentos — esperá un momento y probá de nuevo.',
     'auth/requires-recent-login': 'Por seguridad, cerrá sesión y volvé a iniciar sesión antes de eliminar la cuenta.',
     'auth/popup-closed-by-user': 'Se cerró la ventana de Google antes de terminar.',
+    'auth/popup-blocked': 'El navegador bloqueó la ventana de Google — probá de nuevo.',
+    'auth/cancelled-popup-request': 'Se canceló el intento anterior — probá de nuevo.',
+    'auth/account-exists-with-different-credential': 'Ese email ya tiene una cuenta con otro método de acceso (por ej. contraseña) — iniciá sesión con ese método.',
+    'auth/unauthorized-domain': 'Este sitio no está autorizado para iniciar sesión con Google todavía.',
+    'auth/network-request-failed': 'Fallo de conexión — revisá tu internet y probá de nuevo.',
   };
-  return map[code] || 'Algo salió mal. Probá de nuevo.';
+  return map[code] || `Algo salió mal (${code || 'error desconocido'}). Probá de nuevo.`;
 }
