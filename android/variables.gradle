@@ -13,4 +13,9 @@ ext {
     androidxJunitVersion = '1.1.5'
     androidxEspressoCoreVersion = '3.5.1'
     cordovaAndroidVersion = '10.1.1'
+
+    // Bundle Google's Sign-In SDK into the APK (default is compile-only,
+    // which builds fine but crashes at runtime with ClassNotFoundException
+    // for com.google.android.gms.auth.api.signin.GoogleSignIn).
+    rgcfaIncludeGoogle = true
 }

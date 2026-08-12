@@ -11,6 +11,7 @@ import {
 } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCSCgz9nBq0iyQx9_USuCgjKDC3ogH2awU',
@@ -25,14 +26,11 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Google sign-in via popup only works reliably in a real browser tab.
-// Inside a Capacitor native WebView it needs a dedicated native plugin
-// (@capacitor-firebase/authentication) plus per-platform config files
-// (google-services.json / GoogleService-Info.plist) that we don't have
-// yet — so the Google button is hidden on native builds for now and
-// email/password (which works everywhere, it's plain REST under the hood)
-// is the only native-supported method until that's set up.
-export const googleSignInAvailable = !Capacitor.isNativePlatform();
+// Now always available: on native, @capacitor-firebase/authentication
+// drives Google's native sign-in SDK and syncs the result back into this
+// same `auth` instance, so onAuthChange() below sees it either way — no
+// more need to hide the button on native.
+export const googleSignInAvailable = true;
 
 export function onAuthChange(callback){
   return onAuthStateChanged(auth, callback);
@@ -49,6 +47,13 @@ export async function loginWithEmail(email, password){
 }
 
 export async function loginWithGoogle(){
+  if(Capacitor.isNativePlatform()){
+    // Drives the native Google Sign-In SDK; the plugin syncs the result
+    // into `auth` automatically, so onAuthChange() picks it up same as
+    // any other sign-in method.
+    const result = await FirebaseAuthentication.signInWithGoogle();
+    return result.user;
+  }
   const cred = await signInWithPopup(auth, new GoogleAuthProvider());
   return cred.user;
 }

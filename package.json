@@ -10,6 +10,7 @@
     "sync": "npm run build && npx cap sync"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "^6.3.1",
     "@capacitor/app": "^6.0.1",
     "@capacitor/core": "^6.1.2",
     "@capacitor/local-notifications": "^6.1.0",

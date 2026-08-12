@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "1009620250842",
+    "project_id": "study-zoo",
+    "storage_bucket": "study-zoo.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1009620250842:android:bed5fa1f217d27ea1f75e3",
+        "android_client_info": {
+          "package_name": "com.studyzoo.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1009620250842-02ckfia9anjliuldmi6q4bka8k6m6r8i.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrIZB0hNCFQwRxaxDsVmGTLOQbo8qGaM0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1009620250842-02ckfia9anjliuldmi6q4bka8k6m6r8i.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
