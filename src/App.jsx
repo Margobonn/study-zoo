@@ -8,6 +8,7 @@ import {
   cancelAllNotifications,
   WARNING_POINTS,
 } from './lib/notifications.js';
+import { startOrUpdateTimerNotification, stopTimerNotification } from './lib/timerNotification.js';
 import {
   onAuthChange,
   registerWithEmail,
@@ -526,6 +527,25 @@ export default function App(){
     });
     return () => { sub.remove(); };
   }, []);
+
+  // Persistent countdown notification (Android only — a no-op elsewhere,
+  // see lib/timerNotification.js). Re-fires on phase change too since the
+  // effect depends on timer.phase — that pushes a fresh label + endTime,
+  // which restarts the notification's native chronometer for the new
+  // phase. Stopped whenever the timer isn't actively running (paused,
+  // reset, or idle after a manual stop) per the spec: the notification
+  // must disappear the moment the user stops the timer themselves.
+  useEffect(() => {
+    if(!state) return;
+    if(state.timer.status === 'running' && state.timer.endTime){
+      startOrUpdateTimerNotification(
+        state.timer.phase === 'study' ? 'Estudio' : 'Descanso',
+        state.timer.endTime
+      );
+    } else {
+      stopTimerNotification();
+    }
+  }, [state && state.timer.status, state && state.timer.phase, state && state.timer.endTime]);
 
   // Intentionally not memoized: must recompute every tick (every 250ms while
   // running) against Date.now(), even though state.timer itself doesn't change.
