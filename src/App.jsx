@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
+import { Haptics } from '@capacitor/haptics';
 import * as storage from './lib/storage.js';
 import {
   scheduleAllNotifications,
@@ -163,6 +164,7 @@ function defaultState(){
       studyMin: 25, breakMin: 5, autoTransition: true,
       progressWarnEnabled: true, progressWarnThresholdSec: 10,
       theme: 'dark', timerLayout: 'circular', completionSound: 'clasico', soundMuted: false,
+      vibrationEnabled: true,
     },
     timer: { phase: 'study', status: 'idle', endTime: null, remainingMs: 25*60*1000, extraMs: 0 },
     stats: {
@@ -448,6 +450,29 @@ export default function App(){
   // distinguishable regardless of which completion sound is selected.
   const playWarningTick = useCallback(() => playTone(1400, 0.12, 0.15), [playTone]);
 
+  // Finishing a full STUDY session is the moment that matters most, so it
+  // gets its own louder, busier three-note chime instead of whichever of
+  // the four regular completionSound options is selected — replaces it
+  // rather than layering on top, so the user hears one clear signal, not
+  // two overlapping sounds.
+  const playStudyCompleteSound = useCallback(() => {
+    playTone(784, 0.18, 0.36);
+    setTimeout(() => playTone(988, 0.18, 0.36), 130);
+    setTimeout(() => playTone(1318, 0.55, 0.38), 260);
+  }, [playTone]);
+
+  // Works reliably in the native Android app (real vibration motor via the
+  // native bridge, unaffected by browser policy). On the web/PWA build,
+  // browsers require "transient activation" (a recent tap) for the
+  // Vibration API — since the timer finishes minutes after the last tap
+  // that started it, mobile browsers will usually silently block this
+  // there. That's an inherent browser limitation, not something fixable
+  // from here, hence the silent catch.
+  const triggerStudyCompleteHaptics = useCallback(async () => {
+    try{ await Haptics.vibrate({ duration: 400 }); }
+    catch(e){ /* vibration not available/blocked on this device/browser */ }
+  }, []);
+
   // newlyAvailableSpeciesIds are species whose time threshold this session
   // just crossed — they become purchasable in the shop, not owned outright
   // (buying them is a separate step, see buyAnimal below).
@@ -534,7 +559,11 @@ export default function App(){
     if(state.timer.status === 'running' && remainingMs <= 0){
       const finishedPhase = state.timer.phase;
       const extraMinutes = Math.round((state.timer.extraMs || 0) / 60000);
-      if(!state.config.soundMuted) playCompletionSound(state.config.completionSound || 'clasico');
+      if(!state.config.soundMuted){
+        if(finishedPhase === 'study') playStudyCompleteSound();
+        else playCompletionSound(state.config.completionSound || 'clasico');
+      }
+      if(finishedPhase === 'study' && state.config.vibrationEnabled !== false) triggerStudyCompleteHaptics();
       cancelAllNotifications();
       if(finishedPhase === 'study'){
         const minutes = state.config.studyMin + extraMinutes;
@@ -2123,6 +2152,18 @@ function ConfigScreen({
             </button>
           </div>
         )}
+
+        <label className="switch-row" style={{marginTop:14}}>
+          <div>
+            <div style={{fontWeight:600}}>Vibrar al terminar de estudiar</div>
+            <div style={{fontSize:'0.75rem', color:'var(--text-dim)'}}>Solo al completar una sesión de estudio, no en el descanso</div>
+          </div>
+          <input
+            type="checkbox"
+            checked={config.vibrationEnabled !== false}
+            onChange={e => onPatchConfig({ vibrationEnabled: e.target.checked })}
+          />
+        </label>
       </div>
 
       <div className="danger-zone">
