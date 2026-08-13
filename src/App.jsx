@@ -130,6 +130,27 @@ function computeVisitorCount(state){
   return Math.floor(base * (avgHappiness / 100));
 }
 
+// ---- Zoo HUD (Zoo Life-inspired visual pass). Both are derived, not
+// stored — simple placeholder formulas using data that already exists,
+// meant to be swapped for the real systems once those specific mechanics
+// (nivel general del zoológico, popularidad conectada a visitantes) get
+// implemented on their own turn. The HUD itself won't need to change,
+// only what feeds it.
+function computeZooLevel(state){
+  const uniqueSpecies = new Set(state.animals.map(a => a.speciesId)).size;
+  const decorationsPlaced = Object.keys(state.map.decorations).length;
+  return 1 + Math.floor(uniqueSpecies / 3) + Math.floor(decorationsPlaced / 2);
+}
+
+function computeZooPopularity(state){
+  const placedAnimals = Object.values(state.map.placements)
+    .map(id => state.animals.find(a => a.id === id))
+    .filter(Boolean);
+  if(placedAnimals.length === 0) return 0;
+  const avgHappiness = placedAnimals.reduce((sum, a) => sum + computeHappiness(a), 0) / placedAnimals.length;
+  return Math.round(avgHappiness);
+}
+
 const RARITY_META = {
   common:    { label:'Común',      color:'var(--common)'    },
   uncommon:  { label:'Poco común', color:'var(--uncommon)'  },
@@ -1739,6 +1760,8 @@ function MapScreen({
   const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
   const minutesForNextRow = (unlockedRows - MAP_STARTING_ROWS + 1) * MAP_MINUTES_PER_ROW_UNLOCK;
   const minutesToNextRow = Math.max(0, minutesForNextRow - state.stats.totalStudyMinutes);
+  const zooLevel = computeZooLevel(state);
+  const zooPopularity = computeZooPopularity(state);
 
   // Visitors: local to this screen only, not persisted — they appear
   // while you're looking at the map and vanish the moment you leave (no
@@ -1920,7 +1943,7 @@ function MapScreen({
       cols.push(
         <div
           key={key}
-          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty') + (animalDim ? ' sick' : '')}
+          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? ' terrain-' + terrain.id : ' empty') + (animalDim ? ' sick' : '')}
           data-x={x}
           data-y={y}
           onClick={() => handleTileClick(x, y, locked)}
@@ -1946,6 +1969,21 @@ function MapScreen({
 
   return (
     <React.Fragment>
+      <div className="zoo-hud">
+        <div className="zoo-hud-item level" title="Nivel del zoológico">
+          <span className="zoo-hud-icon">⭐</span>
+          <span className="zoo-hud-value">{zooLevel}</span>
+        </div>
+        <div className="zoo-hud-item popularity" title="Popularidad — sube cuidando bien a tus animales">
+          <span className="zoo-hud-icon">❤️</span>
+          <span className="zoo-hud-value">{zooPopularity}%</span>
+        </div>
+        <div className="zoo-hud-item coins" title="Huellitas">
+          <span className="zoo-hud-icon">{COIN_EMOJI}</span>
+          <span className="zoo-hud-value">{state.coins}</span>
+        </div>
+      </div>
+
       <div style={{fontSize:'0.78rem', color:'var(--text-dim)', marginBottom:10}}>
         {mode && mode.kind === 'terrain' && `Tocá una casilla desbloqueada para pintar ${HABITATS.find(h=>h.id===mode.habitatId).label.toLowerCase()}.`}
         {mode && mode.kind === 'eraser' && 'Tocá una casilla para borrar su terreno.'}
