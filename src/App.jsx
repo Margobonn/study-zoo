@@ -262,7 +262,36 @@ function makeAnimalInstance(species){
     obtainedAt: now,
     lastFed: now,
     feedCount: 0,
+    salud: 100,
   };
+}
+
+// ---- Health (etapa "cuidados"): a placed animal on the wrong terrain
+// loses salud over time instead of being blocked from placement outright —
+// the player makes the call, with a warning first. Central so the pacing
+// is easy to rebalance later, same pattern as the shop's price tables.
+const HEALTH_TICK_MS = 10000;       // how often placed animals' salud is settled
+const HEALTH_DECAY_PER_TICK = 1;    // salud lost per tick in the wrong habitat (~16-17 min to 0 from full)
+const HEALTH_RECOVERY_PER_TICK = 1; // salud regained per tick once moved back to the right habitat
+
+// Which map tile (if any) an animal is currently placed on, or null if
+// it's still unplaced in the tray.
+function findAnimalPlacementKey(mapState, animalId){
+  return Object.keys(mapState.placements).find(k => mapState.placements[k] === animalId) || null;
+}
+
+function isAnimalInWrongHabitat(animal, mapState){
+  const key = findAnimalPlacementKey(mapState, animal.id);
+  if(!key) return false;
+  const terrain = mapState.tiles[key];
+  const species = SPECIES.find(s => s.id === animal.speciesId);
+  return terrain !== species.habitat;
+}
+
+function healthState(salud){
+  if(salud >= 60) return { label:'Sana', emoji:'', color:'var(--accent-2)' };
+  if(salud >= 25) return { label:'Débil', emoji:'😷', color:'var(--rare)' };
+  return { label:'Grave', emoji:'🚨', color:'var(--danger)' };
 }
 
 // Etapas de crecimiento visual según cuántas veces se alimentó al animal.
@@ -621,6 +650,54 @@ export default function App(){
     }
   }, [remainingMs, state && state.timer.status]);
 
+  // Health ticks independently of the study timer — a placed animal loses
+  // salud on a wrong-habitat tile (or recovers it back on a correct one)
+  // in the background regardless of whether a study/break session is
+  // running. Reads/writes via stateRef instead of depending on `state`
+  // directly so the interval isn't torn down and recreated every render
+  // (which happens often — e.g. every 250ms while the study timer ticks).
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const s = stateRef.current;
+      if(!s) return;
+      const deaths = [];
+      let anyChange = false;
+      const updatedAnimals = [];
+      for(const a of s.animals){
+        const key = findAnimalPlacementKey(s.map, a.id);
+        if(!key){ updatedAnimals.push(a); continue; }
+        const terrain = s.map.tiles[key];
+        const species = SPECIES.find(sp => sp.id === a.speciesId);
+        const current = a.salud ?? 100;
+        const mismatched = terrain !== species.habitat;
+        let next = current;
+        if(mismatched) next = Math.max(0, current - HEALTH_DECAY_PER_TICK);
+        else if(current < 100) next = Math.min(100, current + HEALTH_RECOVERY_PER_TICK);
+        if(next !== current) anyChange = true;
+        if(next <= 0){ deaths.push(a); continue; }
+        updatedAnimals.push(next === current ? a : { ...a, salud: next });
+      }
+      if(!anyChange && deaths.length === 0) return;
+      const deadIds = deaths.map(a => a.id);
+      const deadSpeciesIds = deaths.map(a => a.speciesId);
+      const placements = { ...s.map.placements };
+      Object.keys(placements).forEach(k => { if(deadIds.includes(placements[k])) delete placements[k]; });
+      setState({
+        ...s,
+        animals: updatedAnimals,
+        map: { ...s.map, placements },
+        unlockedSpeciesIds: s.unlockedSpeciesIds.filter(id => !deadSpeciesIds.includes(id)),
+      });
+      deaths.forEach(a => {
+        const species = SPECIES.find(sp => sp.id === a.speciesId);
+        showToast(`💀 ${a.name} (${species.name}) murió por estar en el hábitat equivocado. Vas a tener que volver a conseguirlo.`);
+      });
+    }, HEALTH_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
   /* ---- Timer controls ---- */
   const startTimer = () => {
     setState(prev => {
@@ -841,8 +918,11 @@ export default function App(){
     }
     if(terrainHere !== species.habitat){
       const habitatNeeded = HABITATS.find(h => h.id === species.habitat);
-      showToast(`¡A ${species.name} no le gusta este lugar! Necesita ${habitatNeeded.label.toLowerCase()} ${habitatNeeded.emoji}`);
-      return;
+      const ok = confirm(
+        `⚠️ A ${species.name} no le gusta este hábitat — necesita ${habitatNeeded.label.toLowerCase()} ${habitatNeeded.emoji}. ` +
+        `Su salud empezará a bajar mientras esté acá. ¿Seguro que querés dejarlo?`
+      );
+      if(!ok) return;
     }
     setState(prev => {
       if(!prev) return prev;
@@ -883,8 +963,11 @@ export default function App(){
     }
     if(terrainHere !== species.habitat){
       const habitatNeeded = HABITATS.find(h => h.id === species.habitat);
-      showToast(`¡A ${species.name} no le gusta este lugar! Necesita ${habitatNeeded.label.toLowerCase()} ${habitatNeeded.emoji}`);
-      return;
+      const ok = confirm(
+        `⚠️ A ${species.name} no le gusta este hábitat — necesita ${habitatNeeded.label.toLowerCase()} ${habitatNeeded.emoji}. ` +
+        `Su salud empezará a bajar mientras esté acá. ¿Seguro que querés dejarlo?`
+      );
+      if(!ok) return;
     }
     setState(prev => {
       if(!prev) return prev;
@@ -1110,6 +1193,7 @@ export default function App(){
         <AnimalDetailModal
           animal={selectedAnimal}
           food={state.food}
+          mapState={state.map}
           onFeed={feedAnimal}
           onRename={renameAnimal}
           onClose={() => setSelectedAnimalId(null)}
@@ -1246,15 +1330,23 @@ function TimerScreen({ state, remainingMs, onStart, onPause, onReset, onSkip, on
 function AnimalCard({ animal, species, onSelect }){
   const hunger = computeHunger(animal);
   const stage = growthStage(animal);
+  const salud = animal.salud ?? 100;
+  const sick = salud < 60;
   return (
-    <div className={'animal-card stage-' + stage.key} onClick={() => onSelect(animal)}>
+    <div className={'animal-card stage-' + stage.key + (sick ? ' sick' : '')} onClick={() => onSelect(animal)}>
       <span className="rarity-dot" style={{background: RARITY_META[species.rarity].color}}></span>
       {stage.emoji && <span className="stage-badge">{stage.emoji}</span>}
+      {sick && <span className="sick-badge" title="Salud baja">{healthState(salud).emoji || '⚠️'}</span>}
       <span className="emoji">{species.emoji}</span>
       <div className="nm">{animal.name}</div>
       <div className="hunger-bar">
         <div className="hunger-fill" style={{width: hunger+'%', background: hungerState(hunger).color}}></div>
       </div>
+      {salud < 100 && (
+        <div className="hunger-bar" style={{marginTop:3}}>
+          <div className="hunger-fill" style={{width: salud+'%', background: healthState(salud).color}}></div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1588,15 +1680,17 @@ function MapScreen({
       const placedDecorationId = state.map.decorations[key];
       const placedDecoration = placedDecorationId ? SHOP_DECORATIONS.find(d => d.id === placedDecorationId) : null;
       const occupantEmoji = placedSpecies ? placedSpecies.emoji : (placedDecoration ? placedDecoration.emoji : null);
+      const animalSalud = placedAnimal ? (placedAnimal.salud ?? 100) : null;
+      const animalSick = animalSalud !== null && animalSalud < 60;
       cols.push(
         <div
           key={key}
-          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty')}
+          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty') + (animalSick ? ' sick' : '')}
           data-x={x}
           data-y={y}
           onClick={() => handleTileClick(x, y, locked)}
           onPointerDown={!locked && occupantEmoji ? (e) => handleTilePointerDown(x, y, placedSpecies ? 'animal' : 'decoration', occupantEmoji, e) : undefined}
-          title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : undefined}
+          title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : (animalSick ? `Salud baja (${animalSalud}%) — está en el hábitat equivocado` : undefined)}
           style={occupantEmoji ? {touchAction: 'none'} : undefined}
         >
           {locked ? (
@@ -1604,7 +1698,8 @@ function MapScreen({
           ) : (
             <React.Fragment>
               {terrain && <span className="map-terrain-emoji">{terrain.emoji}</span>}
-              {occupantEmoji && <span className="map-animal-emoji">{occupantEmoji}</span>}
+              {occupantEmoji && <span className={'map-animal-emoji' + (animalSick ? ' sick' : '')}>{occupantEmoji}</span>}
+              {animalSick && <span className="map-sick-badge">🚨</span>}
             </React.Fragment>
           )}
         </div>
@@ -2300,7 +2395,7 @@ function NewAnimalModal({ data, onClose }){
   );
 }
 
-function AnimalDetailModal({ animal, food, onFeed, onRename, onClose }){
+function AnimalDetailModal({ animal, food, mapState, onFeed, onRename, onClose }){
   const sp = SPECIES.find(s => s.id === animal.speciesId);
   const meta = RARITY_META[sp.rarity];
   const hunger = computeHunger(animal);
@@ -2308,6 +2403,9 @@ function AnimalDetailModal({ animal, food, onFeed, onRename, onClose }){
   const stage = growthStage(animal);
   const feedCount = animal.feedCount || 0;
   const obtainedDate = new Date(animal.obtainedAt).toLocaleDateString('es-ES', { day:'numeric', month:'short', year:'numeric' });
+  const salud = animal.salud ?? 100;
+  const hlState = healthState(salud);
+  const mismatched = mapState ? isAnimalInWrongHabitat(animal, mapState) : false;
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(animal.name);
@@ -2366,6 +2464,19 @@ function AnimalDetailModal({ animal, food, onFeed, onRename, onClose }){
           <div className="hunger-bar" style={{marginTop:6}}>
             <div className="hunger-fill" style={{width: hunger+'%', background: hs.color}}></div>
           </div>
+
+          <div style={{marginTop:12, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <span>Salud: {hlState.emoji} {hlState.label}</span>
+            <span>{salud}%</span>
+          </div>
+          <div className="hunger-bar" style={{marginTop:6}}>
+            <div className="hunger-fill" style={{width: salud+'%', background: hlState.color}}></div>
+          </div>
+          {mismatched && (
+            <div style={{fontSize:'0.72rem', color:'var(--danger)', marginTop:6}}>
+              🚨 Está en el hábitat equivocado — su salud está bajando. Movelo a {HABITATS.find(h=>h.id===sp.habitat).label.toLowerCase()} {HABITATS.find(h=>h.id===sp.habitat).emoji} para que se recupere.
+            </div>
+          )}
         </div>
 
         <div className="modal-actions">
