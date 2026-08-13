@@ -284,6 +284,9 @@ nav.bottom-nav button.active{ color: var(--primary); background: rgba(255,138,92
 }
 @keyframes sick-pulse{ 0%,100%{ opacity:1; } 50%{ opacity:0.4; } }
 
+/* ---- General neglect (cuidados: hambre/limpieza/cariño/salud combined) ---- */
+.animal-card.neglected .emoji{ filter: grayscale(0.4) saturate(0.7); opacity:0.8; }
+
 .habitat-section{ margin-bottom: 26px; }
 .habitat-title{
   display:flex; align-items:center; justify-content:space-between;

@@ -263,7 +263,39 @@ function makeAnimalInstance(species){
     lastFed: now,
     feedCount: 0,
     salud: 100,
+    lastCleaned: now,
+    lastPetted: now,
   };
+}
+
+// ---- Extra care (etapa "cuidados"), on top of hambre: limpieza (suciedad
+// builds up over time, tap "Limpiar" to reset it) and cariño (atención
+// drains over time, tap "Acariciar" to reset it). Both free/no-cooldown —
+// tapping when already at 0/100 is just a harmless no-op — deliberately
+// kept to two simple time-decayed stats instead of a bigger system, per
+// the brief ("sin sobrecargar la mecánica").
+function computeSuciedad(animal){
+  const hoursSince = (Date.now() - (animal.lastCleaned ?? animal.obtainedAt)) / 3600000;
+  const suciedad = (hoursSince / 24) * 25; // +25 puntos cada 24h
+  return Math.max(0, Math.min(100, Math.round(suciedad)));
+}
+
+function computeAtencion(animal){
+  const hoursSince = (Date.now() - (animal.lastPetted ?? animal.obtainedAt)) / 3600000;
+  const atencion = 100 - (hoursSince / 24) * 25; // -25 puntos cada 24h
+  return Math.max(0, Math.min(100, Math.round(atencion)));
+}
+
+// Overall well-being combining every care stat — this is what actually
+// dims the animal's appearance on the map, not any single stat on its
+// own, so a couple of neglected axes read as "not doing great" rather
+// than needing to check four separate bars.
+function computeHappiness(animal){
+  const hunger = computeHunger(animal);
+  const suciedad = computeSuciedad(animal);
+  const atencion = computeAtencion(animal);
+  const salud = animal.salud ?? 100;
+  return Math.round((hunger + (100 - suciedad) + atencion + salud) / 4);
 }
 
 // ---- Health (etapa "cuidados"): a placed animal on the wrong terrain
@@ -805,6 +837,28 @@ export default function App(){
     showToast('¡Animal alimentado! 🍖');
   };
 
+  const cleanAnimal = (animalId) => {
+    setState(prev => {
+      if(!prev) return prev;
+      return {
+        ...prev,
+        animals: prev.animals.map(a => a.id === animalId ? { ...a, lastCleaned: Date.now() } : a),
+      };
+    });
+    showToast('¡Animal limpiado! 🧼');
+  };
+
+  const petAnimal = (animalId) => {
+    setState(prev => {
+      if(!prev) return prev;
+      return {
+        ...prev,
+        animals: prev.animals.map(a => a.id === animalId ? { ...a, lastPetted: Date.now() } : a),
+      };
+    });
+    showToast('¡Le encantó! 🥰');
+  };
+
   const renameAnimal = (animalId, newName) => {
     const trimmed = newName.trim();
     if(!trimmed) return;
@@ -1195,6 +1249,8 @@ export default function App(){
           food={state.food}
           mapState={state.map}
           onFeed={feedAnimal}
+          onClean={cleanAnimal}
+          onPet={petAnimal}
           onRename={renameAnimal}
           onClose={() => setSelectedAnimalId(null)}
         />
@@ -1332,11 +1388,17 @@ function AnimalCard({ animal, species, onSelect }){
   const stage = growthStage(animal);
   const salud = animal.salud ?? 100;
   const sick = salud < 60;
+  // General neglect (any mix of hunger/dirt/attention/health being low)
+  // dims the sprite even outside the habitat-mismatch "sick" state, which
+  // stays reserved for the more urgent red-outline treatment.
+  const happiness = computeHappiness(animal);
+  const neglected = !sick && happiness < 50;
   return (
-    <div className={'animal-card stage-' + stage.key + (sick ? ' sick' : '')} onClick={() => onSelect(animal)}>
+    <div className={'animal-card stage-' + stage.key + (sick ? ' sick' : '') + (neglected ? ' neglected' : '')} onClick={() => onSelect(animal)}>
       <span className="rarity-dot" style={{background: RARITY_META[species.rarity].color}}></span>
       {stage.emoji && <span className="stage-badge">{stage.emoji}</span>}
       {sick && <span className="sick-badge" title="Salud baja">{healthState(salud).emoji || '⚠️'}</span>}
+      {neglected && <span className="sick-badge" title="Necesita cuidados">😢</span>}
       <span className="emoji">{species.emoji}</span>
       <div className="nm">{animal.name}</div>
       <div className="hunger-bar">
@@ -1682,15 +1744,17 @@ function MapScreen({
       const occupantEmoji = placedSpecies ? placedSpecies.emoji : (placedDecoration ? placedDecoration.emoji : null);
       const animalSalud = placedAnimal ? (placedAnimal.salud ?? 100) : null;
       const animalSick = animalSalud !== null && animalSalud < 60;
+      const animalNeglected = !animalSick && placedAnimal && computeHappiness(placedAnimal) < 50;
+      const animalDim = animalSick || animalNeglected;
       cols.push(
         <div
           key={key}
-          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty') + (animalSick ? ' sick' : '')}
+          className={'map-tile' + (locked ? ' locked' : '') + (terrain ? '' : ' empty') + (animalDim ? ' sick' : '')}
           data-x={x}
           data-y={y}
           onClick={() => handleTileClick(x, y, locked)}
           onPointerDown={!locked && occupantEmoji ? (e) => handleTilePointerDown(x, y, placedSpecies ? 'animal' : 'decoration', occupantEmoji, e) : undefined}
-          title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : (animalSick ? `Salud baja (${animalSalud}%) — está en el hábitat equivocado` : undefined)}
+          title={locked ? 'Fila todavía bloqueada — seguí estudiando para desbloquearla' : (animalSick ? `Salud baja (${animalSalud}%) — está en el hábitat equivocado` : (animalNeglected ? 'Necesita cuidados (comida, limpieza o cariño)' : undefined))}
           style={occupantEmoji ? {touchAction: 'none'} : undefined}
         >
           {locked ? (
@@ -1698,8 +1762,9 @@ function MapScreen({
           ) : (
             <React.Fragment>
               {terrain && <span className="map-terrain-emoji">{terrain.emoji}</span>}
-              {occupantEmoji && <span className={'map-animal-emoji' + (animalSick ? ' sick' : '')}>{occupantEmoji}</span>}
+              {occupantEmoji && <span className={'map-animal-emoji' + (animalDim ? ' sick' : '')}>{occupantEmoji}</span>}
               {animalSick && <span className="map-sick-badge">🚨</span>}
+              {animalNeglected && <span className="map-sick-badge">😢</span>}
             </React.Fragment>
           )}
         </div>
@@ -2395,7 +2460,7 @@ function NewAnimalModal({ data, onClose }){
   );
 }
 
-function AnimalDetailModal({ animal, food, mapState, onFeed, onRename, onClose }){
+function AnimalDetailModal({ animal, food, mapState, onFeed, onClean, onPet, onRename, onClose }){
   const sp = SPECIES.find(s => s.id === animal.speciesId);
   const meta = RARITY_META[sp.rarity];
   const hunger = computeHunger(animal);
@@ -2406,6 +2471,9 @@ function AnimalDetailModal({ animal, food, mapState, onFeed, onRename, onClose }
   const salud = animal.salud ?? 100;
   const hlState = healthState(salud);
   const mismatched = mapState ? isAnimalInWrongHabitat(animal, mapState) : false;
+  const suciedad = computeSuciedad(animal);
+  const limpieza = 100 - suciedad; // shown as "cleanliness", the intuitive direction for a filling bar
+  const atencion = computeAtencion(animal);
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(animal.name);
@@ -2477,13 +2545,31 @@ function AnimalDetailModal({ animal, food, mapState, onFeed, onRename, onClose }
               🚨 Está en el hábitat equivocado — su salud está bajando. Movelo a {HABITATS.find(h=>h.id===sp.habitat).label.toLowerCase()} {HABITATS.find(h=>h.id===sp.habitat).emoji} para que se recupere.
             </div>
           )}
+
+          <div style={{marginTop:12, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <span>Limpieza: {limpieza >= 60 ? '✨' : '🧹'} {limpieza >= 60 ? 'Limpio' : 'Sucio'}</span>
+            <span>{limpieza}%</span>
+          </div>
+          <div className="hunger-bar" style={{marginTop:6}}>
+            <div className="hunger-fill" style={{width: limpieza+'%', background: limpieza >= 60 ? 'var(--accent-2)' : 'var(--rare)'}}></div>
+          </div>
+
+          <div style={{marginTop:12, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <span>Cariño: {atencion >= 60 ? '🥰' : '💤'} {atencion >= 60 ? 'Contento' : 'Extraña atención'}</span>
+            <span>{atencion}%</span>
+          </div>
+          <div className="hunger-bar" style={{marginTop:6}}>
+            <div className="hunger-fill" style={{width: atencion+'%', background: atencion >= 60 ? 'var(--accent-2)' : 'var(--rare)'}}></div>
+          </div>
         </div>
 
-        <div className="modal-actions">
+        <div className="modal-actions" style={{flexWrap:'wrap'}}>
           <button className="btn ghost" onClick={onClose}>Cerrar</button>
           <button className="btn primary" disabled={food<=0} onClick={() => onFeed(animal.id)}>
             🍖 Alimentar {food<=0 ? '(sin comida)' : ''}
           </button>
+          <button className="btn" onClick={() => onClean(animal.id)}>🧼 Limpiar</button>
+          <button className="btn" onClick={() => onPet(animal.id)}>🥰 Acariciar</button>
         </div>
       </div>
     </div>
