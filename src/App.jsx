@@ -163,6 +163,28 @@ const SHOP_ANIMAL_PRICE_BY_RARITY = {
   legendary: 5000,
 };
 
+// ---- Themed albums (etapa "álbumes"): one per existing habitat category,
+// reusing the species→habitat grouping the Hábitats view already has —
+// no new grouping data needed. Reward = 50 + 30×species-in-album, so the
+// bigger albums (bosque, granja) pay out more than the 1-species ones
+// (desierto, montaña) without needing per-album hand-tuning.
+const ALBUM_NAMES = {
+  bosque:   'Fauna del Bosque',
+  granja:   'Amigos de la Granja',
+  selva:    'Criaturas de la Selva',
+  sabana:   'Gigantes de la Sabana',
+  oceano:   'Criaturas Marinas',
+  polar:    'Fauna del Ártico',
+  desierto: 'Reyes del Desierto',
+  montana:  'Guardianes de la Montaña',
+  fantasia: 'Bestias de Fantasía',
+};
+
+const ALBUM_REWARDS = {
+  bosque: 380, granja: 350, selva: 260, sabana: 260, oceano: 260,
+  polar: 170, desierto: 80, montana: 80, fantasia: 110,
+};
+
 // Cosmetic only — no habitat restriction, placeable on any unlocked empty
 // tile regardless of terrain.
 const SHOP_DECORATIONS = [
@@ -208,6 +230,7 @@ function defaultState(){
     unlockedSpeciesIds: [], // time-threshold reached, purchasable in the shop but not yet owned
     sessionLog: [], // { ts, dateKey, minutes }
     decorationInventory: {}, // decorationId -> total count owned (placed + unplaced)
+    claimedAlbums: [], // habitat ids whose completion reward has already been claimed
     map: {
       tiles: {},        // "x_y" -> habitatId painted on that tile (absent = no terrain yet)
       placements: {},   // "x_y" -> animal instance id placed on that tile
@@ -230,6 +253,7 @@ function normalizeState(parsed){
     sessionLog: parsed.sessionLog || [],
     unlockedSpeciesIds: parsed.unlockedSpeciesIds || [],
     decorationInventory: parsed.decorationInventory || {},
+    claimedAlbums: parsed.claimedAlbums || [],
     map: {
       tiles: (parsed.map && parsed.map.tiles) || {},
       placements: (parsed.map && parsed.map.placements) || {},
@@ -912,6 +936,28 @@ export default function App(){
     });
   };
 
+  // Album completion reward (etapa "álbumes"). Completeness is judged
+  // against the FULL unfiltered species list for that habitat (owning
+  // every species there), not whatever HabitatView's current search/rarity
+  // filters happen to be showing.
+  const claimAlbumReward = (habitatId) => {
+    if(state.claimedAlbums.includes(habitatId)) return;
+    const speciesInAlbum = SPECIES.filter(s => s.habitat === habitatId);
+    const complete = speciesInAlbum.every(sp => state.animals.some(a => a.speciesId === sp.id));
+    if(!complete) return;
+    const reward = ALBUM_REWARDS[habitatId] || 0;
+    setState(prev => {
+      if(!prev || prev.claimedAlbums.includes(habitatId)) return prev;
+      return {
+        ...prev,
+        coins: prev.coins + reward,
+        claimedAlbums: [...prev.claimedAlbums, habitatId],
+        stats: { ...prev.stats, totalCoinsEarned: prev.stats.totalCoinsEarned + reward },
+      };
+    });
+    showToast(`🎉 ¡Álbum "${ALBUM_NAMES[habitatId]}" completo! +${reward} ${COIN_NAME_PLURAL.toLowerCase()}`);
+  };
+
   // Affordability is decided from the `state` already rendered on screen
   // (not from inside the setState updater) because the timer tick effect
   // fires setState very frequently — when a tick update is already pending,
@@ -1233,6 +1279,7 @@ export default function App(){
             onRemoveDecoration={removeDecorationFromMap}
             onMoveDecoration={moveDecorationOnMap}
             onEarnVisitorIncome={earnVisitorIncome}
+            onClaimAlbumReward={claimAlbumReward}
           />
         )}
         {tab === 'shop' && (
@@ -1482,7 +1529,7 @@ function AvailableCard({ species }){
 
 function ZooScreen({
   state, onSelect, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal, onMoveAnimal,
-  onPlaceDecoration, onRemoveDecoration, onMoveDecoration, onEarnVisitorIncome,
+  onPlaceDecoration, onRemoveDecoration, onMoveDecoration, onEarnVisitorIncome, onClaimAlbumReward,
 }){
   const [rarityFilter, setRarityFilter] = useState('all');
   const [stateFilter, setStateFilter] = useState('all');
@@ -1598,13 +1645,13 @@ function ZooScreen({
         // Hábitats always shows the full 50-species catalog (owned,
         // purchasable, or locked) regardless of how many animals you own —
         // that's the whole point of it: seeing what's still ahead of you.
-        <HabitatView state={state} rarityFilter={rarityFilter} speciesQuery={query} matchesFilters={matchesFilters} onSelect={onSelect} />
+        <HabitatView state={state} rarityFilter={rarityFilter} speciesQuery={query} matchesFilters={matchesFilters} onSelect={onSelect} onClaimAlbumReward={onClaimAlbumReward} />
       )}
     </React.Fragment>
   );
 }
 
-function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSelect }){
+function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSelect, onClaimAlbumReward }){
   const sections = useMemo(() => {
     return HABITATS.map(hab => {
       const speciesInHabitat = SPECIES.filter(s =>
@@ -1635,17 +1682,36 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
       const emptyMessage = anyOwnedInHabitat
         ? 'Ningún animal de este hábitat coincide con los filtros.'
         : 'Ningún animal descubierto aquí todavía.';
-      return { hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage };
+
+      // Album completeness ignores the current rarity/search filters —
+      // it's about owning every species that TRULY belongs to this
+      // habitat, not just the ones currently visible.
+      const allSpeciesInHabitat = SPECIES.filter(s => s.habitat === hab.id);
+      const albumComplete = allSpeciesInHabitat.every(sp => state.animals.some(a => a.speciesId === sp.id));
+      const albumClaimed = state.claimedAlbums.includes(hab.id);
+
+      return { hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage, albumComplete, albumClaimed };
     }).filter(Boolean);
-  }, [state.animals, state.stats.totalStudyMinutes, state.unlockedSpeciesIds, rarityFilter, matchesFilters]);
+  }, [state.animals, state.stats.totalStudyMinutes, state.unlockedSpeciesIds, state.claimedAlbums, rarityFilter, matchesFilters]);
 
   return (
     <React.Fragment>
-      {sections.map(({ hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage }) => (
+      {sections.map(({ hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage, albumComplete, albumClaimed }) => (
         <div key={hab.id} className="habitat-section">
           <div className="habitat-title">
             <span>{hab.emoji} {hab.label}</span>
             <span className="habitat-count">{ownedCount} de {speciesInHabitat.length}</span>
+          </div>
+          <div className="album-subtitle">
+            {ALBUM_NAMES[hab.id]}
+            {albumComplete && !albumClaimed && (
+              <button className="btn primary small" style={{marginLeft:8}} onClick={() => onClaimAlbumReward(hab.id)}>
+                🎁 Reclamar +{ALBUM_REWARDS[hab.id]} {COIN_EMOJI}
+              </button>
+            )}
+            {albumComplete && albumClaimed && (
+              <span className="album-complete-badge">✅ Álbum completo</span>
+            )}
           </div>
           {visibleCards.length > 0 ? (
             <div className="animal-grid">{visibleCards}</div>

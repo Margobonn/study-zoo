@@ -303,6 +303,11 @@ nav.bottom-nav button.active{ color: var(--primary); background: rgba(255,138,92
 }
 .habitat-count{ font-size:0.75rem; color: var(--text-dim); font-weight:600; }
 .habitat-empty{ color: var(--text-dim); font-size:0.8rem; padding: 10px 2px; }
+.album-subtitle{
+  display:flex; align-items:center; flex-wrap:wrap; gap:4px;
+  font-size:0.72rem; color: var(--text-dim); font-style:italic; margin: -6px 0 10px;
+}
+.album-complete-badge{ color: var(--accent-2); font-style:normal; font-weight:600; }
 
 /* ---- Modal ---- */
 .modal-overlay{
