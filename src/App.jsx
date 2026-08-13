@@ -939,6 +939,13 @@ export default function App(){
     try{ await loginWithGoogle(); return null; }
     catch(e){ return authErrorMessage(e); }
   };
+  // For the one-tap "Continuar con Google" button in Config's Cuenta
+  // section — no modal is open there to show an inline error the way
+  // AuthModal does, so surface failures as a toast instead.
+  const handleGoogleLoginDirect = async () => {
+    const err = await handleGoogleLogin();
+    if(err) showToast(err);
+  };
   const handleLogout = async () => {
     await firebaseLogout();
     showToast('Sesión cerrada');
@@ -1022,6 +1029,7 @@ export default function App(){
             onRegister={handleRegister}
             onLogin={handleLogin}
             onGoogleLogin={handleGoogleLogin}
+            onGoogleLoginDirect={handleGoogleLoginDirect}
             onLogout={handleLogout}
             onDeleteAccount={handleDeleteAccount}
           />
@@ -1895,7 +1903,7 @@ const SOUND_OPTIONS = [
 
 function ConfigScreen({
   state, onUpdateConfig, onPatchConfig, onPreviewSound, onResetAll,
-  authUser, onRegister, onLogin, onGoogleLogin, onLogout, onDeleteAccount,
+  authUser, onRegister, onLogin, onGoogleLogin, onGoogleLoginDirect, onLogout, onDeleteAccount,
 }){
   const { config } = state;
   const isPresetActive = (p) => p.studyMin===config.studyMin && p.breakMin===config.breakMin;
@@ -1939,8 +1947,13 @@ function ConfigScreen({
               Estás jugando como invitado — tu progreso se guarda solo en este dispositivo.
               Creá una cuenta para no perderlo y sincronizarlo entre dispositivos.
             </div>
+            {googleSignInAvailable && (
+              <button className="btn primary block" style={{marginBottom:8}} onClick={onGoogleLoginDirect}>
+                Continuar con Google
+              </button>
+            )}
             <div style={{display:'flex', gap:8}}>
-              <button className="btn primary" style={{flex:1}} onClick={() => setAuthModalMode('register')}>Crear cuenta</button>
+              <button className="btn" style={{flex:1}} onClick={() => setAuthModalMode('register')}>Crear cuenta</button>
               <button className="btn" style={{flex:1}} onClick={() => setAuthModalMode('login')}>Iniciar sesión</button>
             </div>
           </React.Fragment>
