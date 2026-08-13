@@ -109,6 +109,27 @@ function getUnlockedMapRows(totalStudyMinutes){
   return Math.min(MAP_ROWS_TOTAL, MAP_STARTING_ROWS + Math.floor(totalStudyMinutes / MAP_MINUTES_PER_ROW_UNLOCK));
 }
 
+// ---- Visitors (etapa "visitantes"): only run while the Mapa screen is
+// open (no background processing needed per the brief), purely local to
+// MapScreen — not persisted. See the balance writeup: deliberately paced
+// well under the 1 coin/min from studying, a bonus for a well-kept zoo
+// rather than a competing income source.
+const MAP_VISITOR_TICK_MS = 12000;
+const MAP_VISITOR_PURCHASE_CHANCE = 0.12;
+const MAP_VISITOR_MAX = 4;
+
+function computeVisitorCount(state){
+  const placedAnimalIds = Object.values(state.map.placements);
+  if(placedAnimalIds.length === 0) return 0;
+  const placedAnimals = placedAnimalIds
+    .map(id => state.animals.find(a => a.id === id))
+    .filter(Boolean);
+  if(placedAnimals.length === 0) return 0;
+  const avgHappiness = placedAnimals.reduce((sum, a) => sum + computeHappiness(a), 0) / placedAnimals.length;
+  const base = Math.min(MAP_VISITOR_MAX, Math.floor(placedAnimals.length / 2));
+  return Math.floor(base * (avgHappiness / 100));
+}
+
 const RARITY_META = {
   common:    { label:'Común',      color:'var(--common)'    },
   uncommon:  { label:'Poco común', color:'var(--uncommon)'  },
@@ -153,6 +174,13 @@ const SHOP_DECORATIONS = [
   { id:'cabin',   label:'Cabañita',        emoji:'🛖', price:150 },
   { id:'tent',    label:'Carpa de feria',  emoji:'🎪', price:220 },
   { id:'statue',  label:'Estatua',         emoji:'🗿', price:300 },
+  // Functional decorations (etapa "visitantes"): same buy/place/move system
+  // as the purely cosmetic ones above, but visitor bots shop at these
+  // specifically for passive income. See MAP_VISITOR_* below for the
+  // income pacing — deliberately well below the 1 coin/min from actually
+  // studying, so this stays a bonus for a well-kept zoo, not a shortcut.
+  { id:'food_stall',     label:'Puesto de comida',    emoji:'🌭', price:150, isStall:true, income:1 },
+  { id:'souvenir_stall', label:'Puesto de souvenirs', emoji:'🎁', price:250, isStall:true, income:2 },
 ];
 
 /* ============ STORAGE ============ */
@@ -859,6 +887,19 @@ export default function App(){
     showToast('¡Le encantó! 🥰');
   };
 
+  // Visitor bots (MapScreen, local/ephemeral state) shopping at a placed
+  // stall — see MAP_VISITOR_* for the pacing this is meant to stay under.
+  const earnVisitorIncome = (amount) => {
+    setState(prev => {
+      if(!prev) return prev;
+      return {
+        ...prev,
+        coins: prev.coins + amount,
+        stats: { ...prev.stats, totalCoinsEarned: prev.stats.totalCoinsEarned + amount },
+      };
+    });
+  };
+
   const renameAnimal = (animalId, newName) => {
     const trimmed = newName.trim();
     if(!trimmed) return;
@@ -1191,6 +1232,7 @@ export default function App(){
             onPlaceDecoration={placeDecorationOnMap}
             onRemoveDecoration={removeDecorationFromMap}
             onMoveDecoration={moveDecorationOnMap}
+            onEarnVisitorIncome={earnVisitorIncome}
           />
         )}
         {tab === 'shop' && (
@@ -1440,7 +1482,7 @@ function AvailableCard({ species }){
 
 function ZooScreen({
   state, onSelect, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal, onMoveAnimal,
-  onPlaceDecoration, onRemoveDecoration, onMoveDecoration,
+  onPlaceDecoration, onRemoveDecoration, onMoveDecoration, onEarnVisitorIncome,
 }){
   const [rarityFilter, setRarityFilter] = useState('all');
   const [stateFilter, setStateFilter] = useState('all');
@@ -1519,6 +1561,7 @@ function ZooScreen({
           onPlaceDecoration={onPlaceDecoration}
           onRemoveDecoration={onRemoveDecoration}
           onMoveDecoration={onMoveDecoration}
+          onEarnVisitorIncome={onEarnVisitorIncome}
         />
       </React.Fragment>
     );
@@ -1619,7 +1662,7 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
 
 function MapScreen({
   state, onPaintTerrain, onClearTerrain, onPlaceAnimal, onRemoveAnimal, onMoveAnimal,
-  onPlaceDecoration, onRemoveDecoration, onMoveDecoration,
+  onPlaceDecoration, onRemoveDecoration, onMoveDecoration, onEarnVisitorIncome,
 }){
   // { kind:'terrain', habitatId } | { kind:'eraser' } | { kind:'animal', animalId } | { kind:'decoration', decorationId }
   const [mode, setMode] = useState(null);
@@ -1630,6 +1673,68 @@ function MapScreen({
   const unlockedRows = getUnlockedMapRows(state.stats.totalStudyMinutes);
   const minutesForNextRow = (unlockedRows - MAP_STARTING_ROWS + 1) * MAP_MINUTES_PER_ROW_UNLOCK;
   const minutesToNextRow = Math.max(0, minutesForNextRow - state.stats.totalStudyMinutes);
+
+  // Visitors: local to this screen only, not persisted — they appear
+  // while you're looking at the map and vanish the moment you leave (no
+  // background processing needed, per the brief). stateRef/callbackRef
+  // avoid depending on `state`/`onEarnVisitorIncome` directly in the tick
+  // effect's deps, since both change identity on nearly every render
+  // (state changes every ~250ms while the study timer runs) — depending
+  // on them directly would tear down and recreate the interval before it
+  // ever gets to fire, the same pitfall the health tick effect avoids.
+  const [visitors, setVisitors] = useState([]);
+  const nextVisitorIdRef = useRef(0);
+  const mapStateRef = useRef(state);
+  useEffect(() => { mapStateRef.current = state; }, [state]);
+  const onEarnVisitorIncomeRef = useRef(onEarnVisitorIncome);
+  useEffect(() => { onEarnVisitorIncomeRef.current = onEarnVisitorIncome; }, [onEarnVisitorIncome]);
+
+  const targetVisitorCount = computeVisitorCount(state);
+  useEffect(() => {
+    setVisitors(vs => {
+      if(vs.length === targetVisitorCount) return vs;
+      if(vs.length > targetVisitorCount) return vs.slice(0, targetVisitorCount);
+      const additions = [];
+      for(let i = vs.length; i < targetVisitorCount; i++){
+        nextVisitorIdRef.current += 1;
+        additions.push({
+          id: nextVisitorIdRef.current,
+          x: Math.floor(Math.random() * MAP_COLS),
+          y: Math.floor(Math.random() * Math.max(1, unlockedRows)),
+          activity: 'walking',
+        });
+      }
+      return [...vs, ...additions];
+    });
+  }, [targetVisitorCount, unlockedRows]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const s = mapStateRef.current;
+      const rows = Math.max(1, getUnlockedMapRows(s.stats.totalStudyMinutes));
+      const stallKeys = Object.keys(s.map.decorations).filter(k => {
+        const dec = SHOP_DECORATIONS.find(d => d.id === s.map.decorations[k]);
+        return dec && dec.isStall;
+      });
+      setVisitors(vs => vs.map(v => {
+        if(stallKeys.length > 0 && Math.random() < MAP_VISITOR_PURCHASE_CHANCE){
+          const stallKey = stallKeys[Math.floor(Math.random() * stallKeys.length)];
+          const dec = SHOP_DECORATIONS.find(d => d.id === s.map.decorations[stallKey]);
+          const [sx, sy] = stallKey.split('_').map(Number);
+          onEarnVisitorIncomeRef.current(dec.income);
+          return { ...v, x: sx, y: sy, activity: 'shopping' };
+        }
+        const currentKey = `${v.x}_${v.y}`;
+        if(s.map.placements[currentKey] && Math.random() < 0.4){
+          return { ...v, activity: 'watching' };
+        }
+        const nx = Math.max(0, Math.min(MAP_COLS - 1, v.x + (Math.floor(Math.random() * 3) - 1)));
+        const ny = Math.max(0, Math.min(rows - 1, v.y + (Math.floor(Math.random() * 3) - 1)));
+        return { ...v, x: nx, y: ny, activity: 'walking' };
+      }));
+    }, MAP_VISITOR_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
 
   const placedAnimalIds = useMemo(() => new Set(Object.values(state.map.placements)), [state.map.placements]);
   const unplacedAnimals = useMemo(
@@ -1847,7 +1952,25 @@ function MapScreen({
         )}
       </div>
 
-      <div className="map-grid">{rows}</div>
+      <div className="map-grid">
+        {rows}
+        {visitors.map(v => (
+          <span
+            key={v.id}
+            className={'map-visitor' + (v.activity === 'watching' ? ' watching' : '') + (v.activity === 'shopping' ? ' shopping' : '')}
+            style={{ left: 8 + v.x * 47, top: 8 + v.y * 47 }}
+            title={v.activity === 'shopping' ? 'Comprando en un puesto' : (v.activity === 'watching' ? 'Observando un animal' : 'Paseando')}
+          >
+            {v.activity === 'shopping' ? '🛍️' : '🚶'}
+          </span>
+        ))}
+      </div>
+
+      {targetVisitorCount > 0 && (
+        <div style={{fontSize:'0.72rem', color:'var(--text-dim)', marginTop:8, textAlign:'center'}}>
+          🚶 {targetVisitorCount} visitante{targetVisitorCount===1?'':'s'} paseando por tu zoológico
+        </div>
+      )}
 
       {unlockedRows < MAP_ROWS_TOTAL && (
         <div style={{fontSize:'0.72rem', color:'var(--text-dim)', marginTop:10, textAlign:'center'}}>
@@ -1948,7 +2071,9 @@ function ShopScreen({ state, onBuyFoodBundle, onBuyAnimal, onBuyDecoration }){
               <div key={dec.id} className="shop-card">
                 <div className="shop-card-emoji">{dec.emoji}</div>
                 <div className="shop-card-label">{dec.label}</div>
-                <div className="shop-card-detail">{owned > 0 ? `Tenés ${owned}` : 'Cosmética'}</div>
+                <div className="shop-card-detail">
+                  {owned > 0 ? `Tenés ${owned}` : (dec.isStall ? `Atrae visitantes · +${dec.income} 🐾` : 'Cosmética')}
+                </div>
                 <button
                   className="btn primary small"
                   disabled={!canAfford}
