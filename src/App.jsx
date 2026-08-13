@@ -98,6 +98,26 @@ const HABITATS = [
   { id:'fantasia', label:'Fantasía', emoji:'✨' },
 ];
 
+// ---- Favorite decorations per hábitat (etapa "objetos favoritos", Zoo
+// Life-inspired vision). Every animal in a given habitat shares that
+// habitat's favorites, rather than 50 hand-authored per-species lists —
+// decoration ids must match SHOP_DECORATIONS below. The bonus only
+// applies to a placed, correctly-habitat'd animal with a favorite
+// decoration on one of its 8 neighboring tiles — see
+// hasAdjacentFavoriteDecoration/computeHappiness.
+const HABITAT_FAVORITE_DECORATIONS = {
+  bosque:   ['tree', 'flowers'],
+  granja:   ['cabin', 'flowers'],
+  selva:    ['tree', 'statue'],
+  sabana:   ['tent', 'rock'],
+  oceano:   ['fountain'],
+  polar:    ['statue', 'lantern'],
+  desierto: ['rock', 'tent'],
+  montana:  ['rock', 'statue'],
+  fantasia: ['fountain', 'lantern'],
+};
+const HABITAT_FAVORITE_HAPPINESS_BONUS = 10;
+
 // Central config for the playable Zoo Tycoon-style map (etapa 3). Kept
 // together for easy rebalancing, same pattern as SHOP_* tables.
 const MAP_COLS = 6;
@@ -125,7 +145,7 @@ function computeVisitorCount(state){
     .map(id => state.animals.find(a => a.id === id))
     .filter(Boolean);
   if(placedAnimals.length === 0) return 0;
-  const avgHappiness = placedAnimals.reduce((sum, a) => sum + computeHappiness(a), 0) / placedAnimals.length;
+  const avgHappiness = placedAnimals.reduce((sum, a) => sum + computeHappiness(a, state.map), 0) / placedAnimals.length;
   const base = Math.min(MAP_VISITOR_MAX, Math.floor(placedAnimals.length / 2));
   return Math.floor(base * (avgHappiness / 100));
 }
@@ -147,7 +167,7 @@ function computeZooPopularity(state){
     .map(id => state.animals.find(a => a.id === id))
     .filter(Boolean);
   if(placedAnimals.length === 0) return 0;
-  const avgHappiness = placedAnimals.reduce((sum, a) => sum + computeHappiness(a), 0) / placedAnimals.length;
+  const avgHappiness = placedAnimals.reduce((sum, a) => sum + computeHappiness(a, state.map), 0) / placedAnimals.length;
   return Math.round(avgHappiness);
 }
 
@@ -359,18 +379,6 @@ function computeAtencion(animal){
   return Math.max(0, Math.min(100, Math.round(atencion)));
 }
 
-// Overall well-being combining every care stat — this is what actually
-// dims the animal's appearance on the map, not any single stat on its
-// own, so a couple of neglected axes read as "not doing great" rather
-// than needing to check four separate bars.
-function computeHappiness(animal){
-  const hunger = computeHunger(animal);
-  const suciedad = computeSuciedad(animal);
-  const atencion = computeAtencion(animal);
-  const salud = animal.salud ?? 100;
-  return Math.round((hunger + (100 - suciedad) + atencion + salud) / 4);
-}
-
 // ---- Health (etapa "cuidados"): a placed animal on the wrong terrain
 // loses salud over time instead of being blocked from placement outright —
 // the player makes the call, with a warning first. Central so the pacing
@@ -391,6 +399,47 @@ function isAnimalInWrongHabitat(animal, mapState){
   const terrain = mapState.tiles[key];
   const species = SPECIES.find(s => s.id === animal.speciesId);
   return terrain !== species.habitat;
+}
+
+// Etapa "objetos favoritos": true if a placed animal has one of its
+// habitat's favorite decorations on any of the 8 tiles around it. Only
+// meaningful for a placed animal — an unplaced one (or one with no
+// mapState given) simply gets no bonus.
+function hasAdjacentFavoriteDecoration(animal, mapState){
+  const key = findAnimalPlacementKey(mapState, animal.id);
+  if(!key) return false;
+  const [x, y] = key.split('_').map(Number);
+  const species = SPECIES.find(s => s.id === animal.speciesId);
+  const favorites = HABITAT_FAVORITE_DECORATIONS[species.habitat] || [];
+  if(favorites.length === 0) return false;
+  for(let dx = -1; dx <= 1; dx++){
+    for(let dy = -1; dy <= 1; dy++){
+      if(dx === 0 && dy === 0) continue;
+      const neighborKey = `${x+dx}_${y+dy}`;
+      const decId = mapState.decorations[neighborKey];
+      if(decId && favorites.includes(decId)) return true;
+    }
+  }
+  return false;
+}
+
+// Overall well-being combining every care stat — this is what actually
+// dims the animal's appearance on the map, not any single stat on its
+// own, so a couple of neglected axes read as "not doing great" rather
+// than needing to check four separate bars. mapState is optional: pass
+// it whenever available so the favorite-decoration bonus applies;
+// callers without map access (or for an unplaced animal) just don't get
+// the bonus, nothing breaks.
+function computeHappiness(animal, mapState){
+  const hunger = computeHunger(animal);
+  const suciedad = computeSuciedad(animal);
+  const atencion = computeAtencion(animal);
+  const salud = animal.salud ?? 100;
+  let happiness = (hunger + (100 - suciedad) + atencion + salud) / 4;
+  if(mapState && hasAdjacentFavoriteDecoration(animal, mapState)){
+    happiness += HABITAT_FAVORITE_HAPPINESS_BONUS;
+  }
+  return Math.round(Math.min(100, happiness));
 }
 
 function healthState(salud){
@@ -1493,7 +1542,7 @@ function TimerScreen({ state, remainingMs, onStart, onPause, onReset, onSkip, on
 
 /* ============ ZOO SCREEN ============ */
 
-function AnimalCard({ animal, species, onSelect }){
+function AnimalCard({ animal, species, mapState, onSelect }){
   const hunger = computeHunger(animal);
   const stage = growthStage(animal);
   const salud = animal.salud ?? 100;
@@ -1501,14 +1550,16 @@ function AnimalCard({ animal, species, onSelect }){
   // General neglect (any mix of hunger/dirt/attention/health being low)
   // dims the sprite even outside the habitat-mismatch "sick" state, which
   // stays reserved for the more urgent red-outline treatment.
-  const happiness = computeHappiness(animal);
+  const happiness = computeHappiness(animal, mapState);
   const neglected = !sick && happiness < 50;
+  const loved = mapState && hasAdjacentFavoriteDecoration(animal, mapState);
   return (
     <div className={'animal-card stage-' + stage.key + (sick ? ' sick' : '') + (neglected ? ' neglected' : '')} onClick={() => onSelect(animal)}>
       <span className="rarity-dot" style={{background: RARITY_META[species.rarity].color}}></span>
       {stage.emoji && <span className="stage-badge">{stage.emoji}</span>}
       {sick && <span className="sick-badge" title="Salud baja">{healthState(salud).emoji || '⚠️'}</span>}
       {neglected && <span className="sick-badge" title="Necesita cuidados">😢</span>}
+      {loved && !sick && !neglected && <span className="sick-badge" title="¡Le encanta su decoración favorita!">✨</span>}
       <span className="emoji">{species.emoji}</span>
       <div className="nm">{animal.name}</div>
       <div className="hunger-bar">
@@ -1658,7 +1709,7 @@ function ZooScreen({
         ) : (
           <div className="animal-grid">
             {filtered.map(a => (
-              <AnimalCard key={a.id} animal={a} species={SPECIES.find(s=>s.id===a.speciesId)} onSelect={onSelect} />
+              <AnimalCard key={a.id} animal={a} species={SPECIES.find(s=>s.id===a.speciesId)} mapState={state.map} onSelect={onSelect} />
             ))}
           </div>
         )
@@ -1689,7 +1740,7 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
         if(allOwnedOfSpecies.length > 0) anyOwnedInHabitat = true;
         const matching = allOwnedOfSpecies.filter(matchesFilters);
         if(matching.length > 0){
-          matching.forEach(a => visibleCards.push(<AnimalCard key={a.id} animal={a} species={sp} onSelect={onSelect} />));
+          matching.forEach(a => visibleCards.push(<AnimalCard key={a.id} animal={a} species={sp} mapState={state.map} onSelect={onSelect} />));
         } else if(allOwnedOfSpecies.length === 0){
           if(state.unlockedSpeciesIds.includes(sp.id)){
             visibleCards.push(<AvailableCard key={sp.id} species={sp} />);
@@ -1713,7 +1764,7 @@ function HabitatView({ state, rarityFilter, speciesQuery, matchesFilters, onSele
 
       return { hab, speciesInHabitat, ownedCount, visibleCards, emptyMessage, albumComplete, albumClaimed };
     }).filter(Boolean);
-  }, [state.animals, state.stats.totalStudyMinutes, state.unlockedSpeciesIds, state.claimedAlbums, rarityFilter, matchesFilters]);
+  }, [state.animals, state.stats.totalStudyMinutes, state.unlockedSpeciesIds, state.claimedAlbums, state.map, rarityFilter, matchesFilters]);
 
   return (
     <React.Fragment>
@@ -1938,7 +1989,8 @@ function MapScreen({
       const occupantEmoji = placedSpecies ? placedSpecies.emoji : (placedDecoration ? placedDecoration.emoji : null);
       const animalSalud = placedAnimal ? (placedAnimal.salud ?? 100) : null;
       const animalSick = animalSalud !== null && animalSalud < 60;
-      const animalNeglected = !animalSick && placedAnimal && computeHappiness(placedAnimal) < 50;
+      const animalNeglected = !animalSick && placedAnimal && computeHappiness(placedAnimal, state.map) < 50;
+      const animalLoved = !animalSick && !animalNeglected && placedAnimal && hasAdjacentFavoriteDecoration(placedAnimal, state.map);
       const animalDim = animalSick || animalNeglected;
       cols.push(
         <div
@@ -1959,6 +2011,7 @@ function MapScreen({
               {occupantEmoji && <span className={'map-animal-emoji' + (animalDim ? ' sick' : '')}>{occupantEmoji}</span>}
               {animalSick && <span className="map-sick-badge">🚨</span>}
               {animalNeglected && <span className="map-sick-badge">😢</span>}
+              {animalLoved && <span className="map-sick-badge">✨</span>}
             </React.Fragment>
           )}
         </div>
